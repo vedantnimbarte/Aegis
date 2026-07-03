@@ -100,6 +100,44 @@ def fetch_github_user(access_token: str) -> dict[str, Any]:
     }
 
 
+def list_user_repositories(access_token: str) -> list[dict[str, Any]]:
+    """List repositories the authenticated user can access.
+
+    Returns the first page (up to 100, most-recently-updated first). Private
+    repos require the `repo` OAuth scope. Pagination is left for a later phase.
+    """
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    try:
+        with httpx.Client(timeout=_TIMEOUT) as client:
+            resp = client.get(
+                f"{GITHUB_API_BASE}/user/repos",
+                headers=headers,
+                params={"per_page": 100, "sort": "updated", "visibility": "all"},
+            )
+    except httpx.HTTPError as exc:
+        raise GitHubOAuthError(f"Could not reach GitHub: {exc}") from exc
+
+    if resp.status_code != 200:
+        raise GitHubOAuthError(
+            f"Failed to list GitHub repositories (HTTP {resp.status_code})"
+        )
+
+    return [
+        {
+            "github_repo_id": str(repo["id"]),
+            "name": repo["full_name"],
+            "url": repo["html_url"],
+            "private": repo.get("private", False),
+            "description": repo.get("description"),
+        }
+        for repo in resp.json()
+    ]
+
+
 def _fetch_primary_email(client: httpx.Client, headers: dict[str, str]) -> Optional[str]:
     resp = client.get(f"{GITHUB_API_BASE}/user/emails", headers=headers)
     if resp.status_code != 200:
