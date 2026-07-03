@@ -1,25 +1,51 @@
 """Repository endpoints."""
 from __future__ import annotations
 
-from fastapi import APIRouter, status
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.orm import Session
+
+from app.api import deps
+from app.db.session import get_db
+from app.models.user import User
+from app.schemas.repository import GitHubRepo, RepositoryRead, RepositorySyncRequest
+from app.services import github as github_service
+from app.services import repo_service
 
 router = APIRouter(prefix="/repos", tags=["repositories"])
 
 
-@router.get("", status_code=status.HTTP_200_OK)
-async def list_repositories() -> dict:
-    """List the authenticated user's connected repositories (and/or the
-    repositories available via their GitHub token).
+@router.get("", response_model=list[RepositoryRead])
+def list_repositories(
+    current_user: User = Depends(deps.get_current_active_user),
+    db: Session = Depends(get_db),
+) -> list[RepositoryRead]:
+    """List repositories connected to the user's dashboard."""
+    return repo_service.list_connected_repos(db, current_user)
 
-    TODO(phase-2): fetch from DB + GitHub API.
+
+@router.get("/available", response_model=list[GitHubRepo])
+def list_available_repositories(
+    current_user: User = Depends(deps.get_current_active_user),
+) -> list[GitHubRepo]:
+    """List repositories available from the user's GitHub account (for the
+    connect dropdown). Live call to the GitHub API using the stored token.
     """
-    return {"detail": "Not implemented", "endpoint": "GET /repos"}
+    if not current_user.github_token:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail="No GitHub token on file. Reconnect your GitHub account.",
+        )
+    try:
+        return github_service.list_user_repositories(current_user.github_token)
+    except github_service.GitHubOAuthError as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail=str(exc))
 
 
-@router.post("", status_code=status.HTTP_201_CREATED)
-async def sync_repository() -> dict:
-    """Sync/add a GitHub repository to the user's dashboard.
-
-    TODO(phase-2): validate ownership, persist a Repository row.
-    """
-    return {"detail": "Not implemented", "endpoint": "POST /repos"}
+@router.post("", response_model=RepositoryRead, status_code=status.HTTP_201_CREATED)
+def sync_repository(
+    payload: RepositorySyncRequest,
+    current_user: User = Depends(deps.get_current_active_user),
+    db: Session = Depends(get_db),
+) -> RepositoryRead:
+    """Connect (or update) a GitHub repository on the user's dashboard."""
+    return repo_service.sync_repository(db, current_user, payload)
