@@ -19,7 +19,7 @@
   }
 
   ::selection {
-    background-color: rgba(124, 92, 255, 0.32);
+    background-color: rgba(34, 211, 238, 0.28);
     color: #fff;
   }
 
@@ -40,7 +40,7 @@
   }
 
   :focus-visible {
-    outline: 2px solid theme("colors.violet-soft");
+    outline: 2px solid theme("colors.cyan");
     outline-offset: 2px;
     border-radius: 4px;
   }
@@ -50,8 +50,8 @@
   /* Faint engineering grid used behind the whole page. */
   .bg-grid {
     background-image:
-      linear-gradient(to right, rgba(124, 92, 255, 0.045) 1px, transparent 1px),
-      linear-gradient(to bottom, rgba(124, 92, 255, 0.045) 1px, transparent 1px);
+      linear-gradient(to right, rgba(34, 211, 238, 0.04) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(34, 211, 238, 0.04) 1px, transparent 1px);
     background-size: 56px 56px;
   }
 
@@ -59,10 +59,10 @@
     text-wrap: balance;
   }
 
-  .glow-violet {
+  .glow-accent {
     box-shadow:
-      0 0 0 1px rgba(124, 92, 255, 0.18),
-      0 0 40px -12px rgba(124, 92, 255, 0.55);
+      0 0 0 1px rgba(34, 211, 238, 0.14),
+      0 0 44px -18px rgba(34, 211, 238, 0.5);
   }
 }
 

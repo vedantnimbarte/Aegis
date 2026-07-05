@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import {
   ShieldHalf,
   Radar,
@@ -9,42 +9,41 @@ import {
   Wrench,
   ArrowRight,
   Check,
+  X,
   Github,
   Twitter,
   Loader2,
+  Box,
+  KeyRound,
+  Trash2,
+  Network,
+  GitPullRequest,
+  ChevronDown,
+  AlertTriangle,
+  FileSearch,
   type LucideIcon,
 } from "lucide-react";
 
 /* -------------------------------------------------------------------------- */
-/*  The signature: a scripted autonomous-pentest session.                     */
-/*  Aegis proves exploits instead of just flagging them, so the hero shows    */
-/*  the console doing exactly that — ending in a VALIDATED verdict.           */
+/*  The signature: a live in-product scan activity feed.                      */
+/*  Aegis runs autonomously in the cloud — the hero shows a scan streaming    */
+/*  in from the product, ending in a VALIDATED finding.                       */
 /* -------------------------------------------------------------------------- */
 
-type Tone = "cmd" | "muted" | "agent" | "exploit" | "danger" | "ok";
+type Tone = "step" | "alert" | "note" | "result" | "action";
 
-type Line = { text: string; tone: Tone; delay: number };
+type Activity = { text: string; meta?: string; tone: Tone; delay: number };
 
-const SESSION: Line[] = [
-  { text: "$ aegis scan --target acme/payments-api --mode deep", tone: "cmd", delay: 0 },
-  { text: "cloning repository into isolated sandbox … ok", tone: "muted", delay: 620 },
-  { text: "mapping attack surface … 34 routes · 6 auth boundaries", tone: "agent", delay: 900 },
-  { text: "hypothesis: IDOR on GET /api/v1/invoices/:id", tone: "agent", delay: 1080 },
-  { text: "crafting exploit … executing in sandbox", tone: "agent", delay: 980 },
-  { text: "GET /api/v1/invoices/1042 → 200  (foreign tenant data)", tone: "exploit", delay: 1040 },
-  { text: "replayed 3× · confirmed · not a false positive", tone: "muted", delay: 900 },
-  { text: "✔ VALIDATED   CWE-639   CVSS 8.1 High", tone: "ok", delay: 720 },
-  { text: "PoC captured · remediation patch generated", tone: "danger", delay: 560 },
+const ACTIVITY: Activity[] = [
+  { text: "Cloned repository into an isolated sandbox", tone: "step", delay: 0 },
+  { text: "Mapped attack surface", meta: "34 routes · 6 auth boundaries", tone: "step", delay: 820 },
+  { text: "Probing broken object-level authorization", meta: "GET /api/v1/invoices/:id", tone: "step", delay: 1040 },
+  { text: "Executed exploit in isolated sandbox", tone: "step", delay: 980 },
+  { text: "Foreign tenant invoice exposed", meta: "HTTP 200", tone: "alert", delay: 1040 },
+  { text: "Replayed 3× — confirmed, not a false positive", tone: "note", delay: 860 },
+  { text: "Validated", meta: "CWE-639 · CVSS 8.1 · High", tone: "result", delay: 720 },
+  { text: "Remediation pull request drafted", tone: "action", delay: 560 },
 ];
-
-const TONE_CLASS: Record<Tone, string> = {
-  cmd: "text-fg",
-  muted: "text-faint",
-  agent: "text-violet-soft",
-  exploit: "text-cyan",
-  danger: "text-amber",
-  ok: "text-signal",
-};
 
 function usePrefersReducedMotion() {
   const [reduced, setReduced] = useState(false);
@@ -58,6 +57,64 @@ function usePrefersReducedMotion() {
   return reduced;
 }
 
+function ActivityRow({ item, active }: { item: Activity; active: boolean }) {
+  if (item.tone === "result") {
+    return (
+      <div className="mt-1 flex items-center gap-2.5 rounded-lg border border-signal/25 bg-signal/[0.06] px-3 py-2.5 motion-safe:animate-fade-up">
+        <ShieldCheck className="h-4 w-4 shrink-0 text-signal" strokeWidth={2} />
+        <span className="text-[13px] font-semibold text-fg">{item.text}</span>
+        {item.meta ? (
+          <span className="ml-auto font-mono text-[11px] text-signal">{item.meta}</span>
+        ) : null}
+      </div>
+    );
+  }
+
+  if (item.tone === "note") {
+    return (
+      <p className="pl-6 text-[12px] leading-relaxed text-faint motion-safe:animate-fade-up">
+        {item.text}
+      </p>
+    );
+  }
+
+  if (item.tone === "action") {
+    return (
+      <div className="flex items-center gap-2 text-[13px] text-cyan-soft motion-safe:animate-fade-up">
+        <GitPullRequest className="h-3.5 w-3.5 shrink-0" strokeWidth={2} />
+        {item.text}
+      </div>
+    );
+  }
+
+  if (item.tone === "alert") {
+    return (
+      <div className="flex items-start gap-2.5 text-[13px] text-danger motion-safe:animate-fade-up">
+        <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" strokeWidth={2} />
+        <span>
+          {item.text}
+          {item.meta ? <span className="ml-2 font-mono text-[11px] opacity-80">{item.meta}</span> : null}
+        </span>
+      </div>
+    );
+  }
+
+  // step
+  return (
+    <div className="flex items-start gap-2.5 motion-safe:animate-fade-up">
+      {active ? (
+        <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-cyan motion-safe:animate-pulse-dot" />
+      ) : (
+        <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-signal" strokeWidth={2.5} />
+      )}
+      <span className="text-[13px] leading-relaxed">
+        <span className={active ? "text-fg" : "text-muted"}>{item.text}</span>
+        {item.meta ? <span className="ml-2 font-mono text-[11px] text-faint">{item.meta}</span> : null}
+      </span>
+    </div>
+  );
+}
+
 function AttackConsole() {
   const reduced = usePrefersReducedMotion();
   const [visible, setVisible] = useState(0);
@@ -65,12 +122,12 @@ function AttackConsole() {
 
   useEffect(() => {
     if (reduced) {
-      setVisible(SESSION.length);
+      setVisible(ACTIVITY.length);
       return;
     }
     let elapsed = 300;
-    SESSION.forEach((line, i) => {
-      elapsed += line.delay;
+    ACTIVITY.forEach((item, i) => {
+      elapsed += item.delay;
       const id = setTimeout(() => setVisible(i + 1), elapsed);
       timers.current.push(id);
     });
@@ -78,73 +135,50 @@ function AttackConsole() {
     return () => captured.forEach(clearTimeout);
   }, [reduced]);
 
-  const done = visible >= SESSION.length;
+  const done = visible >= ACTIVITY.length;
 
   return (
     <div className="relative">
-      {/* ambient glow behind the console */}
+      {/* ambient glow behind the panel — restrained */}
       <div
         aria-hidden
-        className="absolute -inset-8 -z-10 rounded-[2rem] bg-violet/20 blur-3xl motion-safe:animate-drift"
+        className="absolute -inset-6 -z-10 rounded-[2rem] bg-cyan/10 blur-3xl motion-safe:animate-drift"
       />
-      <div className="overflow-hidden rounded-xl border border-line bg-[#090C13]/95 shadow-2xl backdrop-blur-sm glow-violet">
-        {/* titlebar */}
-        <div className="flex items-center gap-2 border-b border-line bg-surface/70 px-4 py-3">
-          <span className="h-3 w-3 rounded-full bg-danger/70" />
-          <span className="h-3 w-3 rounded-full bg-amber/70" />
-          <span className="h-3 w-3 rounded-full bg-signal/70" />
-          <span className="ml-3 font-mono text-xs tracking-tight text-muted">
-            aegis-agent · run #4471
+      <div className="overflow-hidden rounded-xl border border-line bg-[#0B0E15]/95 shadow-2xl backdrop-blur-sm glow-accent">
+        {/* product panel header — a scan running inside the app */}
+        <div className="flex items-center gap-2.5 border-b border-line bg-surface/70 px-4 py-3">
+          <span className="grid h-6 w-6 shrink-0 place-items-center rounded-md border border-line bg-ink text-cyan-soft">
+            <Radar className="h-3.5 w-3.5" strokeWidth={2} />
           </span>
-          <span className="ml-auto flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-widest text-signal">
-            <span className="h-1.5 w-1.5 rounded-full bg-signal motion-safe:animate-pulse-dot" />
-            {done ? "validated" : "live"}
+          <span className="truncate font-mono text-[12px] text-fg">acme/payments-api</span>
+          <span className="hidden shrink-0 rounded border border-line bg-ink px-1.5 py-0.5 font-mono text-[10px] text-muted sm:inline">
+            main
+          </span>
+          <span
+            className={`ml-auto flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.12em] ${
+              done ? "border-signal/30 text-signal" : "border-cyan/30 text-cyan-soft"
+            }`}
+          >
+            <span
+              className={`h-1.5 w-1.5 rounded-full ${
+                done ? "bg-signal" : "bg-cyan motion-safe:animate-pulse-dot"
+              }`}
+            />
+            {done ? "Validated" : "Scanning"}
           </span>
         </div>
 
-        {/* stream */}
-        <div className="min-h-[19rem] space-y-1.5 p-5 font-mono text-[13px] leading-relaxed sm:text-sm">
-          {SESSION.slice(0, visible).map((line, i) => {
-            const isLast = i === visible - 1;
-            const showCursor = !done && isLast;
-            const prefix =
-              line.tone === "cmd"
-                ? ""
-                : line.tone === "agent"
-                ? "[agent] "
-                : line.tone === "exploit"
-                ? "[exploit] "
-                : line.tone === "ok"
-                ? ""
-                : line.tone === "danger"
-                ? "  ↳ "
-                : "  ";
-            return (
-              <div
-                key={i}
-                className={`motion-safe:animate-fade-up ${TONE_CLASS[line.tone]} ${
-                  line.tone === "ok"
-                    ? "mt-2 rounded-md border border-signal/25 bg-signal/[0.06] px-2.5 py-1.5 font-semibold"
-                    : ""
-                }`}
-              >
-                {line.tone !== "cmd" && line.tone !== "ok" && (
-                  <span className="select-none text-faint">{prefix}</span>
-                )}
-                {line.tone === "cmd" && <span className="select-none text-signal">➜ </span>}
-                <span>{line.text.replace(/^\$ /, "")}</span>
-                {showCursor && (
-                  <span className="ml-0.5 inline-block h-4 w-2 translate-y-0.5 bg-violet-soft align-middle motion-safe:animate-blink" />
-                )}
-              </div>
-            );
-          })}
+        {/* activity feed */}
+        <div className="min-h-[18rem] space-y-2.5 p-5">
+          {ACTIVITY.slice(0, visible).map((item, i) => (
+            <ActivityRow key={i} item={item} active={!done && i === visible - 1 && item.tone === "step"} />
+          ))}
         </div>
       </div>
 
-      {/* caption grounding the demo in the product's real claim */}
-      <p className="mt-4 text-center font-mono text-xs text-faint">
-        Every finding is executed and replayed before it reaches you.
+      {/* caption grounding the panel in the product's real claim */}
+      <p className="mt-4 text-center text-[12px] text-faint">
+        Every finding is executed and replayed before it reaches your dashboard.
       </p>
     </div>
   );
@@ -177,14 +211,14 @@ function WaitlistForm() {
     return (
       <div
         role="status"
-        className="flex items-center gap-3 rounded-lg border border-signal/30 bg-signal/[0.07] px-4 py-4 motion-safe:animate-fade-up"
+        className="flex items-center gap-3 rounded-lg border border-signal/30 bg-signal/[0.07] px-4 py-3.5 motion-safe:animate-fade-up"
       >
-        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-signal/15 text-signal">
-          <Check className="h-5 w-5" strokeWidth={2.5} />
+        <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-signal/15 text-signal">
+          <Check className="h-4 w-4" strokeWidth={2.5} />
         </span>
         <div>
-          <p className="font-display text-sm font-semibold text-fg">Thanks for joining — you&rsquo;re on the list.</p>
-          <p className="text-sm text-muted">We&rsquo;ll email early access to your first scan soon.</p>
+          <p className="font-display text-sm font-semibold text-fg">You&rsquo;re on the list.</p>
+          <p className="text-[13px] text-muted">We&rsquo;ll email early access to your first scan soon.</p>
         </div>
       </div>
     );
@@ -192,7 +226,7 @@ function WaitlistForm() {
 
   return (
     <form onSubmit={onSubmit} noValidate className="w-full">
-      <div className="flex flex-col gap-3 sm:flex-row">
+      <div className="flex flex-col gap-2.5 sm:flex-row">
         <div className="relative flex-1">
           <label htmlFor="email" className="sr-only">
             Work email
@@ -210,13 +244,13 @@ function WaitlistForm() {
             }}
             aria-invalid={Boolean(error)}
             aria-describedby={error ? "email-error" : undefined}
-            className="w-full rounded-lg border border-line bg-surface/80 px-4 py-3.5 font-mono text-sm text-fg placeholder:text-faint transition-colors focus:border-violet/60 focus:bg-surface"
+            className="w-full rounded-lg border border-line bg-surface/80 px-4 py-3 font-mono text-[13px] text-fg placeholder:text-faint transition-colors focus:border-cyan/60 focus:bg-surface"
           />
         </div>
         <button
           type="submit"
           disabled={status === "loading"}
-          className="group inline-flex items-center justify-center gap-2 rounded-lg bg-violet px-6 py-3.5 font-display text-sm font-semibold text-white shadow-lg shadow-violet/25 transition-all hover:bg-violet-soft hover:shadow-violet/40 focus-visible:outline-violet-soft disabled:opacity-70"
+          className="group inline-flex items-center justify-center gap-2 rounded-lg bg-cyan px-5 py-3 font-display text-[13px] font-semibold text-obsidian shadow-lg shadow-cyan/20 transition-all hover:bg-cyan-soft hover:shadow-cyan/30 disabled:opacity-70"
         >
           {status === "loading" ? (
             <>
@@ -232,11 +266,11 @@ function WaitlistForm() {
         </button>
       </div>
       {error ? (
-        <p id="email-error" className="mt-2.5 font-mono text-xs text-danger">
+        <p id="email-error" className="mt-2.5 font-mono text-[11px] text-danger">
           {error}
         </p>
       ) : (
-        <p className="mt-2.5 font-mono text-xs text-faint">
+        <p className="mt-2.5 font-mono text-[11px] text-faint">
           No spam. Early access, then a founding-user rate.
         </p>
       )}
@@ -289,23 +323,292 @@ const FEATURES: Feature[] = [
 
 function FeatureCard({ step, phase, title, body, Icon }: Feature) {
   return (
-    <article className="group relative flex flex-col overflow-hidden rounded-xl border border-line bg-surface/40 p-6 transition-all duration-300 hover:-translate-y-1 hover:border-violet/40 hover:bg-surface/70 sm:p-7">
+    <article className="group relative flex flex-col overflow-hidden rounded-xl border border-line bg-surface/40 p-5 transition-all duration-300 hover:-translate-y-0.5 hover:border-cyan/40 hover:bg-surface/70 sm:p-6">
       {/* hover glow */}
       <div
         aria-hidden
-        className="pointer-events-none absolute -right-16 -top-16 h-40 w-40 rounded-full bg-violet/10 opacity-0 blur-2xl transition-opacity duration-300 group-hover:opacity-100"
+        className="pointer-events-none absolute -right-16 -top-16 h-40 w-40 rounded-full bg-cyan/10 opacity-0 blur-2xl transition-opacity duration-300 group-hover:opacity-100"
       />
-      <div className="mb-5 flex items-center justify-between">
-        <span className="grid h-11 w-11 place-items-center rounded-lg border border-line bg-ink text-violet-soft transition-colors group-hover:border-violet/50 group-hover:text-violet">
-          <Icon className="h-5 w-5" strokeWidth={1.75} />
+      <div className="mb-4 flex items-center justify-between">
+        <span className="grid h-9 w-9 place-items-center rounded-lg border border-line bg-ink text-cyan-soft transition-colors group-hover:border-cyan/50 group-hover:text-cyan">
+          <Icon className="h-4 w-4" strokeWidth={1.75} />
         </span>
-        <span className="font-mono text-[11px] uppercase tracking-[0.2em] text-faint">
+        <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-faint">
           {step} · {phase}
         </span>
       </div>
-      <h3 className="font-display text-lg font-semibold text-fg">{title}</h3>
-      <p className="mt-2 text-sm leading-relaxed text-muted">{body}</p>
+      <h3 className="font-display text-[15px] font-semibold text-fg">{title}</h3>
+      <p className="mt-1.5 text-[13px] leading-relaxed text-muted">{body}</p>
     </article>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Small shared section heading                                               */
+/* -------------------------------------------------------------------------- */
+
+function SectionHeading({
+  eyebrow,
+  title,
+  children,
+}: {
+  eyebrow: string;
+  title: string;
+  children?: ReactNode;
+}) {
+  return (
+    <div className="mb-10 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+      <div>
+        <p className="mb-2.5 font-mono text-[11px] uppercase tracking-[0.14em] text-cyan-soft">
+          {eyebrow}
+        </p>
+        <h2 className="max-w-md font-display text-2xl font-bold tracking-[-0.01em] text-fg text-balance sm:text-3xl">
+          {title}
+        </h2>
+      </div>
+      {children ? (
+        <p className="max-w-sm text-[13px] leading-relaxed text-muted">{children}</p>
+      ) : null}
+    </div>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Sample finding — proof of what you actually receive                        */
+/* -------------------------------------------------------------------------- */
+
+function SampleFinding() {
+  return (
+    <div className="overflow-hidden rounded-xl border border-line bg-surface/40">
+      {/* card header */}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-line px-5 py-4">
+        <span className="inline-flex items-center gap-1.5 rounded-md border border-amber/30 bg-amber/10 px-2 py-1 font-mono text-[11px] font-medium uppercase tracking-wider text-amber">
+          <span className="h-1.5 w-1.5 rounded-full bg-amber" />
+          High
+        </span>
+        <h3 className="font-display text-sm font-semibold text-fg">
+          Broken object-level authorization (IDOR)
+        </h3>
+        <span className="ml-auto inline-flex items-center gap-1.5 rounded-full border border-signal/30 px-2.5 py-1 font-mono text-[11px] text-signal">
+          <Check className="h-3.5 w-3.5" strokeWidth={2.5} />
+          Validated
+        </span>
+      </div>
+
+      {/* meta row */}
+      <dl className="flex flex-wrap gap-x-6 gap-y-2 border-b border-line px-5 py-3 font-mono text-[11px]">
+        {[
+          { k: "Endpoint", v: "GET /api/v1/invoices/:id" },
+          { k: "Weakness", v: "CWE-639" },
+          { k: "Severity", v: "CVSS 8.1" },
+          { k: "Branch", v: "main" },
+          { k: "Confidence", v: "Replayed 3×" },
+        ].map((m) => (
+          <div key={m.k} className="flex items-center gap-1.5">
+            <dt className="text-faint">{m.k}</dt>
+            <dd className="text-muted">{m.v}</dd>
+          </div>
+        ))}
+      </dl>
+
+      <div className="px-5 py-4">
+        <p className="text-[13px] leading-relaxed text-muted">
+          A request authenticated as one tenant could read another tenant&rsquo;s invoice by changing
+          the record ID. Aegis confirmed the exposure by retrieving live data across the boundary.
+        </p>
+
+        {/* expandable captured evidence */}
+        <details className="group mt-4 overflow-hidden rounded-lg border border-line bg-[#0B0E15]">
+          <summary className="flex cursor-pointer list-none items-center justify-between gap-4 px-4 py-3 text-[13px] font-medium text-fg transition-colors hover:text-cyan-soft [&::-webkit-details-marker]:hidden">
+            <span className="inline-flex items-center gap-2">
+              <FileSearch className="h-4 w-4 text-cyan-soft" strokeWidth={1.75} />
+              View captured evidence
+            </span>
+            <ChevronDown
+              className="h-4 w-4 shrink-0 text-faint transition-transform duration-200 group-open:rotate-180"
+              strokeWidth={2}
+            />
+          </summary>
+          <div className="space-y-3 border-t border-line px-4 py-4">
+            <div>
+              <p className="mb-1.5 font-mono text-[10px] uppercase tracking-[0.14em] text-faint">Request</p>
+              <div className="overflow-x-auto rounded-md bg-obsidian px-3 py-2.5 font-mono text-[12px] leading-relaxed text-muted">
+                <span className="text-cyan-soft">GET</span> /api/v1/invoices/1042
+                <br />
+                Authorization: Bearer &lt;tenant-A&gt;
+              </div>
+            </div>
+            <div>
+              <p className="mb-1.5 font-mono text-[10px] uppercase tracking-[0.14em] text-faint">Response</p>
+              <div className="overflow-x-auto rounded-md bg-obsidian px-3 py-2.5 font-mono text-[12px] leading-relaxed text-muted">
+                <span className="text-signal">200 OK</span>
+                <br />
+                {"{ "}
+                <span className="text-danger">&quot;tenant&quot;: &quot;tenant-B&quot;</span>
+                , &quot;total&quot;: &quot;$48,210.00&quot; {"}"}
+              </div>
+              <p className="mt-2 font-mono text-[11px] text-danger">
+                Tenant-A credentials read tenant-B&rsquo;s invoice.
+              </p>
+            </div>
+          </div>
+        </details>
+
+        {/* suggested fix */}
+        <div className="mt-4 overflow-hidden rounded-lg border border-line bg-[#0B0E15]">
+          <p className="border-b border-line px-4 py-2.5 font-mono text-[10px] uppercase tracking-[0.14em] text-faint">
+            Suggested fix
+          </p>
+          <pre className="overflow-x-auto px-4 py-3 font-mono text-[12px] leading-relaxed text-muted">
+            <code>
+              {"  invoice = Invoice.find(params[:id])\n"}
+              <span className="text-signal">{"+ authorize!(:read, invoice)\n"}</span>
+              {"  render json: invoice"}
+            </code>
+          </pre>
+        </div>
+
+        <a
+          href="#"
+          className="mt-4 inline-flex items-center gap-1.5 text-[12px] font-medium text-cyan-soft transition-colors hover:text-cyan"
+        >
+          <GitPullRequest className="h-3.5 w-3.5" strokeWidth={2} />
+          Open the remediation pull request
+        </a>
+      </div>
+    </div>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Comparison — the wedge: proof, not noise                                   */
+/* -------------------------------------------------------------------------- */
+
+const COMPARE: { label: string; legacy: string; aegis: string }[] = [
+  { label: "False positives", legacy: "A triage queue full of maybes", aegis: "Zero — every finding is exploited" },
+  { label: "Evidence", legacy: "A severity guess on a code pattern", aegis: "A working PoC, replayed in a sandbox" },
+  { label: "The fix", legacy: "You research and write it", aegis: "AI patch, opened as a pull request" },
+  { label: "Coverage", legacy: "A point-in-time scan", aegis: "Continuous, on every commit" },
+];
+
+function Comparison() {
+  return (
+    <div className="overflow-hidden rounded-xl border border-line">
+      <div className="grid grid-cols-[1fr_1fr] bg-surface/60 font-mono text-[10px] uppercase tracking-[0.14em] sm:grid-cols-[minmax(0,10rem)_1fr_1fr]">
+        <div className="hidden px-5 py-3.5 text-faint sm:block" />
+        <div className="border-l border-line px-5 py-3.5 text-faint">Legacy SAST / DAST</div>
+        <div className="border-l border-line bg-cyan/[0.06] px-5 py-3.5 text-cyan-soft">Aegis</div>
+      </div>
+      {COMPARE.map((row) => (
+        <div
+          key={row.label}
+          className="grid grid-cols-[1fr_1fr] border-t border-line sm:grid-cols-[minmax(0,10rem)_1fr_1fr]"
+        >
+          <div className="hidden px-5 py-4 font-mono text-[11px] uppercase tracking-wider text-faint sm:block">
+            {row.label}
+          </div>
+          <div className="flex items-start gap-2 border-l border-line px-5 py-4 text-[13px] text-muted">
+            <X className="mt-0.5 h-3.5 w-3.5 shrink-0 text-faint" strokeWidth={2.5} />
+            {row.legacy}
+          </div>
+          <div className="flex items-start gap-2 border-l border-line bg-cyan/[0.04] px-5 py-4 text-[13px] text-fg">
+            <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-cyan" strokeWidth={2.5} />
+            {row.aegis}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Safe by design — the objection every security buyer has                    */
+/* -------------------------------------------------------------------------- */
+
+const SAFETY: { Icon: LucideIcon; title: string; body: string }[] = [
+  {
+    Icon: Box,
+    title: "Ephemeral sandboxes",
+    body: "Each scan spins up an isolated container that is destroyed the moment it finishes.",
+  },
+  {
+    Icon: KeyRound,
+    title: "Least-privilege access",
+    body: "A scoped GitHub App reads your code and opens PRs — nothing more. No production access, ever.",
+  },
+  {
+    Icon: Network,
+    title: "Exploits stay contained",
+    body: "Every attack runs against the sandboxed clone, never against your live systems or users.",
+  },
+  {
+    Icon: Trash2,
+    title: "No data retention",
+    body: "Your source and scan artifacts are purged after each run. We keep the findings, not your code.",
+  },
+];
+
+function SafeByDesign() {
+  return (
+    <div className="grid gap-3.5 sm:grid-cols-2">
+      {SAFETY.map(({ Icon, title, body }) => (
+        <article key={title} className="flex gap-4 rounded-xl border border-line bg-surface/40 p-5">
+          <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg border border-line bg-ink text-cyan-soft">
+            <Icon className="h-4 w-4" strokeWidth={1.75} />
+          </span>
+          <div>
+            <h3 className="font-display text-[15px] font-semibold text-fg">{title}</h3>
+            <p className="mt-1 text-[13px] leading-relaxed text-muted">{body}</p>
+          </div>
+        </article>
+      ))}
+    </div>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/*  FAQ — native <details>, no JS                                              */
+/* -------------------------------------------------------------------------- */
+
+const FAQ: { q: string; a: string }[] = [
+  {
+    q: "What languages and frameworks do you support?",
+    a: "Aegis reasons about running behavior, not a fixed rule set, so it works across most web stacks — JavaScript/TypeScript, Python, Ruby, Go, and Java to start. Tell us your stack when you join and we'll confirm coverage.",
+  },
+  {
+    q: "Does Aegis need access to production?",
+    a: "No. Aegis clones your repository into an isolated sandbox and attacks that copy. It never touches your live systems, data, or users.",
+  },
+  {
+    q: "GitHub only, or GitLab too?",
+    a: "The beta connects to GitHub. GitLab and Bitbucket are on the roadmap — let us know what you use and we'll prioritize accordingly.",
+  },
+  {
+    q: "Will it open pull requests automatically?",
+    a: "Aegis proposes a fix as a pull request for every validated finding. You review and merge — nothing lands in your codebase without your approval.",
+  },
+  {
+    q: "What will it cost after the beta?",
+    a: "Beta is free. Early users lock in a founding rate when we launch paid plans. Pricing scales with the number of repositories under continuous testing.",
+  },
+];
+
+function FaqList() {
+  return (
+    <div className="divide-y divide-line overflow-hidden rounded-xl border border-line bg-surface/40">
+      {FAQ.map(({ q, a }) => (
+        <details key={q} className="group">
+          <summary className="flex cursor-pointer list-none items-center justify-between gap-4 px-5 py-4 font-display text-sm font-medium text-fg transition-colors hover:text-cyan-soft [&::-webkit-details-marker]:hidden">
+            {q}
+            <ChevronDown
+              className="h-4 w-4 shrink-0 text-faint transition-transform duration-200 group-open:rotate-180"
+              strokeWidth={2}
+            />
+          </summary>
+          <p className="px-5 pb-4 text-[13px] leading-relaxed text-muted">{a}</p>
+        </details>
+      ))}
+    </div>
   );
 }
 
@@ -320,60 +623,58 @@ export default function Home() {
       <div aria-hidden className="pointer-events-none absolute inset-0 bg-grid" />
       <div
         aria-hidden
-        className="pointer-events-none absolute left-1/2 top-[-10%] -z-0 h-[40rem] w-[60rem] -translate-x-1/2 rounded-full bg-violet/10 blur-[120px]"
+        className="pointer-events-none absolute left-1/2 top-[-12%] -z-0 h-[36rem] w-[54rem] -translate-x-1/2 rounded-full bg-cyan/[0.07] blur-[130px]"
       />
       <div
         aria-hidden
-        className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-violet/40 to-transparent"
+        className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-cyan/30 to-transparent"
       />
 
       <div className="relative z-10 mx-auto flex max-w-6xl flex-col px-5 sm:px-8">
         {/* Nav */}
-        <header className="flex items-center justify-between py-6">
+        <header className="flex items-center justify-between py-5">
           <a href="#" className="flex items-center gap-2.5">
-            <span className="grid h-9 w-9 place-items-center rounded-lg border border-violet/40 bg-violet/10 text-violet-soft">
-              <ShieldHalf className="h-5 w-5" strokeWidth={2} />
+            <span className="grid h-8 w-8 place-items-center rounded-lg border border-cyan/40 bg-cyan/10 text-cyan-soft">
+              <ShieldHalf className="h-4 w-4" strokeWidth={2} />
             </span>
-            <span className="font-display text-lg font-semibold tracking-tight text-fg">Aegis</span>
+            <span className="font-display text-[15px] font-semibold tracking-tight text-fg">Aegis</span>
           </a>
-          <span className="hidden items-center gap-2 rounded-full border border-line bg-surface/60 px-3.5 py-1.5 font-mono text-xs text-muted sm:flex">
+          <span className="hidden items-center gap-2 rounded-full border border-line bg-surface/60 px-3 py-1.5 font-mono text-[11px] text-muted sm:flex">
             <span className="h-1.5 w-1.5 rounded-full bg-signal motion-safe:animate-pulse-dot" />
             Private beta · onboarding soon
           </span>
         </header>
 
         {/* Hero */}
-        <section className="grid items-center gap-14 py-12 lg:grid-cols-[1.05fr_1fr] lg:gap-10 lg:py-20">
+        <section className="grid items-center gap-12 py-10 lg:grid-cols-[1.05fr_1fr] lg:gap-10 lg:py-16">
           <div>
-            <p className="mb-6 inline-flex items-center gap-2 font-mono text-xs uppercase tracking-[0.22em] text-violet-soft">
-              <span className="h-px w-8 bg-violet/60" />
+            <p className="mb-5 inline-flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.14em] text-cyan-soft">
+              <span className="h-px w-7 bg-cyan/60" />
               autonomous offensive security
             </p>
-            <h1 className="font-display text-4xl font-bold leading-[1.05] tracking-tight text-fg text-balance sm:text-5xl lg:text-6xl">
+            <h1 className="font-display text-[2rem] font-bold leading-[1.08] tracking-[-0.02em] text-fg text-balance sm:text-[2.5rem] lg:text-5xl">
               Continuous AI
               <br />
-              <span className="bg-gradient-to-r from-violet-soft via-violet to-cyan bg-clip-text text-transparent">
-                penetration testing
-              </span>
+              <span className="text-cyan-soft">penetration testing</span>
             </h1>
-            <p className="mt-6 max-w-xl text-base leading-relaxed text-muted sm:text-lg">
+            <p className="mt-5 max-w-lg text-[13px] leading-relaxed text-muted sm:text-sm">
               Aegis dynamically executes code in isolated sandboxes to detect, exploit, and validate
-              real security vulnerabilities—providing zero-false-positive reports.
+              real security vulnerabilities — delivering zero-false-positive reports.
             </p>
 
-            <div className="mt-9 max-w-xl">
+            <div className="mt-8 max-w-lg">
               <WaitlistForm />
             </div>
 
-            <dl className="mt-10 flex flex-wrap gap-x-10 gap-y-4 border-t border-line pt-6">
+            <dl className="mt-9 flex flex-wrap gap-x-9 gap-y-4 border-t border-line pt-6">
               {[
                 { k: "0", v: "false positives" },
                 { k: "24/7", v: "continuous coverage" },
                 { k: "PoC", v: "on every finding" },
               ].map((s) => (
                 <div key={s.v}>
-                  <dt className="font-display text-2xl font-semibold text-fg">{s.k}</dt>
-                  <dd className="font-mono text-xs uppercase tracking-wider text-faint">{s.v}</dd>
+                  <dt className="font-display text-xl font-semibold text-fg">{s.k}</dt>
+                  <dd className="mt-0.5 font-mono text-[10px] uppercase tracking-[0.12em] text-faint">{s.v}</dd>
                 </div>
               ))}
             </dl>
@@ -383,36 +684,90 @@ export default function Home() {
         </section>
 
         {/* Features — the continuous loop */}
-        <section className="py-16 lg:py-24">
-          <div className="mb-12 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+        <section className="py-14 lg:py-20">
+          <div className="mb-10 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
             <div>
-              <p className="mb-3 font-mono text-xs uppercase tracking-[0.22em] text-violet-soft">
+              <p className="mb-2.5 font-mono text-[11px] uppercase tracking-[0.14em] text-cyan-soft">
                 the loop
               </p>
-              <h2 className="max-w-lg font-display text-3xl font-bold tracking-tight text-fg text-balance sm:text-4xl">
+              <h2 className="max-w-md font-display text-2xl font-bold tracking-[-0.01em] text-fg text-balance sm:text-3xl">
                 One closed loop, running while you ship
               </h2>
             </div>
-            <p className="max-w-sm text-sm leading-relaxed text-muted">
+            <p className="max-w-sm text-[13px] leading-relaxed text-muted">
               Monitor, attack, validate, remediate — Aegis keeps the cycle turning on every commit so
               nothing regresses between releases.
             </p>
           </div>
 
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className="grid gap-3.5 sm:grid-cols-2">
             {FEATURES.map((f) => (
               <FeatureCard key={f.step} {...f} />
             ))}
           </div>
         </section>
 
+        {/* Sample finding — proof of the deliverable */}
+        <section className="py-14 lg:py-20">
+          <SectionHeading eyebrow="what you get" title="A validated exploit, not a warning">
+            Every finding arrives with the request that broke in, the data it exposed, and the patch
+            that closes it.
+          </SectionHeading>
+          <SampleFinding />
+        </section>
+
+        {/* Comparison — the wedge */}
+        <section className="py-14 lg:py-20">
+          <SectionHeading eyebrow="why aegis" title="Proof, not a queue of maybes">
+            Traditional scanners hand you noise to triage. Aegis only reports what it could actually
+            exploit.
+          </SectionHeading>
+          <Comparison />
+        </section>
+
+        {/* Safe by design — objection handling */}
+        <section className="py-14 lg:py-20">
+          <SectionHeading eyebrow="safe by design" title="It attacks a copy, never your systems">
+            Aegis is built to run offensive tooling without ever putting your production or data at
+            risk.
+          </SectionHeading>
+          <SafeByDesign />
+        </section>
+
+        {/* FAQ */}
+        <section className="py-14 lg:py-20">
+          <SectionHeading eyebrow="questions" title="Answers before you ask" />
+          <FaqList />
+        </section>
+
+        {/* Closing CTA */}
+        <section className="py-14 lg:py-20">
+          <div className="relative overflow-hidden rounded-2xl border border-cyan/25 bg-surface/40 px-6 py-12 text-center sm:px-12 sm:py-16">
+            <div
+              aria-hidden
+              className="pointer-events-none absolute left-1/2 top-0 -z-0 h-56 w-[36rem] max-w-full -translate-x-1/2 rounded-full bg-cyan/10 blur-[100px]"
+            />
+            <div className="relative mx-auto max-w-xl">
+              <h2 className="font-display text-2xl font-bold tracking-[-0.01em] text-fg text-balance sm:text-3xl">
+                Start protecting your repos
+              </h2>
+              <p className="mx-auto mt-3 max-w-md text-[13px] leading-relaxed text-muted sm:text-sm">
+                Join the private beta and put your first repository through a full autonomous pentest.
+              </p>
+              <div className="mx-auto mt-7 max-w-md text-left">
+                <WaitlistForm />
+              </div>
+            </div>
+          </div>
+        </section>
+
         {/* Footer */}
-        <footer className="mt-8 flex flex-col items-center justify-between gap-6 border-t border-line py-8 sm:flex-row">
+        <footer className="mt-6 flex flex-col items-center justify-between gap-5 border-t border-line py-7 sm:flex-row">
           <div className="flex items-center gap-2.5">
-            <span className="grid h-7 w-7 place-items-center rounded-md border border-violet/30 bg-violet/10 text-violet-soft">
-              <ShieldHalf className="h-4 w-4" strokeWidth={2} />
+            <span className="grid h-6 w-6 place-items-center rounded-md border border-cyan/30 bg-cyan/10 text-cyan-soft">
+              <ShieldHalf className="h-3.5 w-3.5" strokeWidth={2} />
             </span>
-            <p className="font-mono text-xs text-faint">
+            <p className="font-mono text-[11px] text-faint">
               © {new Date().getFullYear()} Aegis Security. All rights reserved.
             </p>
           </div>
@@ -422,7 +777,7 @@ export default function Home() {
               target="_blank"
               rel="noopener noreferrer"
               aria-label="Aegis on X"
-              className="grid h-9 w-9 place-items-center rounded-lg border border-line text-muted transition-colors hover:border-violet/40 hover:text-fg"
+              className="grid h-8 w-8 place-items-center rounded-lg border border-line text-muted transition-colors hover:border-cyan/40 hover:text-fg"
             >
               <Twitter className="h-4 w-4" />
             </a>
@@ -431,7 +786,7 @@ export default function Home() {
               target="_blank"
               rel="noopener noreferrer"
               aria-label="Aegis on GitHub"
-              className="grid h-9 w-9 place-items-center rounded-lg border border-line text-muted transition-colors hover:border-violet/40 hover:text-fg"
+              className="grid h-8 w-8 place-items-center rounded-lg border border-line text-muted transition-colors hover:border-cyan/40 hover:text-fg"
             >
               <Github className="h-4 w-4" />
             </a>

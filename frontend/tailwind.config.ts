@@ -1,35 +1,22 @@
 import type { Config } from "tailwindcss";
 
 const config: Config = {
-  content: [
-    "./app/**/*.{ts,tsx}",
-    "./components/**/*.{ts,tsx}",
-    "./lib/**/*.{ts,tsx}",
-  ],
+  content: ["./app/**/*.{ts,tsx}"],
   theme: {
     extend: {
       colors: {
         obsidian: "#07090E",
         ink: "#0B0E15",
         surface: "#0E121A",
-        raised: "#141926",
         line: "#1B2130",
-        violet: "#7C5CFF",
-        "violet-soft": "#9B84FF",
         cyan: "#22D3EE",
+        "cyan-soft": "#67E8F9",
         signal: "#4ADE80",
         danger: "#FB5C6B",
         amber: "#F5B451",
         fg: "#E6E9F0",
         muted: "#8A93A6",
         faint: "#5A6273",
-        // CVSS severity ramp — tuned to sit inside the existing palette.
-        sev: {
-          critical: "#FB5C6B",
-          high: "#FF8A4D",
-          medium: "#F5B451",
-          low: "#22D3EE",
-        },
       },
       fontFamily: {
         display: ["var(--font-display)", "system-ui", "sans-serif"],
