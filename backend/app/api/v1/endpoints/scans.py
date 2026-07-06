@@ -33,6 +33,7 @@ def create_scan(
 ) -> ScanRead:
     """Trigger a new Strix scan for a user-owned repository."""
     deps.ensure_email_verified(current_user)
+    deps.ensure_scan_authorized(current_user)
     try:
         billing.assert_can_create_scan(db, current_user)
     except billing.PaymentRequiredError as exc:

@@ -201,6 +201,8 @@ export const api = {
 
   // --- User ---
   me: () => request<User>("/users/me"),
+  acceptScanTerms: () =>
+    request<User>("/users/me/accept-scan-terms", { method: "POST" }),
   updateIntegrations: (body: {
     llm_model?: string | null;
     llm_api_key?: string | null;

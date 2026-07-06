@@ -354,7 +354,7 @@ def enqueue_due_scheduled_scans(self) -> dict:
 
             repo = schedule.repository
             user = repo.user
-            if not user.email_verified:
+            if not user.email_verified or not user.has_accepted_scan_terms:
                 skipped += 1
                 continue
             try:

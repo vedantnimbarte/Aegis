@@ -59,6 +59,13 @@ class User(UUIDMixin, TimestampMixin, Base):
 
     is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
 
+    # When the user accepted the scan-authorization terms (attesting they own
+    # or are permitted to test their targets). NULL until accepted; scanning is
+    # gated on it. See SECURITY.md.
+    scan_terms_accepted_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
     # --- Integrations (Pro/Enterprise) ----------------------------------
     # BYOK: user-supplied LLM model id (LiteLLM provider/model form) and API
     # key. The key is encrypted at rest; both fall back to the platform's
@@ -96,6 +103,10 @@ class User(UUIDMixin, TimestampMixin, Base):
             return True
         # Compare timezone-aware; DB values are stored with tz.
         return end > datetime.now(timezone.utc)
+
+    @property
+    def has_accepted_scan_terms(self) -> bool:
+        return self.scan_terms_accepted_at is not None
 
     @property
     def has_llm_key(self) -> bool:

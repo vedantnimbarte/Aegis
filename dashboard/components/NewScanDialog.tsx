@@ -10,6 +10,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { api, ApiError } from "@/lib/api";
+import { useAuth } from "@/lib/auth";
 import type { Repository, ScanMode } from "@/lib/types";
 import { Button, ErrorState } from "./ui";
 
@@ -30,20 +31,31 @@ export function NewScanDialog({
 }) {
   const router = useRouter();
   const queryClient = useQueryClient();
+  const { user } = useAuth();
 
   const [repositoryId, setRepositoryId] = useState(
     defaultRepoId ?? repositories[0]?.id ?? ""
   );
   const [mode, setMode] = useState<ScanMode>("standard");
   const [instructions, setInstructions] = useState("");
+  const [authorized, setAuthorized] = useState(false);
+
+  // First scan requires accepting the authorization terms (attesting the user
+  // is permitted to test the target). Recorded once, server-side.
+  const needsTerms = user ? !user.has_accepted_scan_terms : false;
 
   const mutation = useMutation({
-    mutationFn: () =>
-      api.createScan({
+    mutationFn: async () => {
+      if (needsTerms) {
+        await api.acceptScanTerms();
+        queryClient.invalidateQueries({ queryKey: ["me"] });
+      }
+      return api.createScan({
         repository_id: repositoryId,
         scan_mode: mode,
         custom_instructions: instructions.trim() || null,
-      }),
+      });
+    },
     onSuccess: (scan) => {
       queryClient.invalidateQueries({ queryKey: ["scans"] });
       onClose();
@@ -158,6 +170,22 @@ export function NewScanDialog({
             />
           </div>
 
+          {/* Authorization attestation (first scan only) */}
+          {needsTerms ? (
+            <label className="flex items-start gap-2.5 rounded-lg border border-amber/30 bg-amber/[0.06] px-3 py-2.5">
+              <input
+                type="checkbox"
+                checked={authorized}
+                onChange={(e) => setAuthorized(e.target.checked)}
+                className="mt-0.5 h-4 w-4 shrink-0 accent-cyan"
+              />
+              <span className="text-[12px] leading-relaxed text-amber">
+                I own or am explicitly authorized to run penetration tests against
+                this target, and I accept the scan authorization terms.
+              </span>
+            </label>
+          ) : null}
+
           {errorMessage ? (
             <div className="space-y-2.5">
               <ErrorState message={errorMessage} />
@@ -181,7 +209,7 @@ export function NewScanDialog({
           <Button
             icon={Radar}
             loading={mutation.isPending}
-            disabled={!repositoryId}
+            disabled={!repositoryId || (needsTerms && !authorized)}
             onClick={() => mutation.mutate()}
           >
             Launch pentest

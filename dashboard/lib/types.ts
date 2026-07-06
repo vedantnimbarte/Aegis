@@ -32,6 +32,7 @@ export interface User {
   stripe_customer_id: string | null;
   is_active: boolean;
   created_at: string;
+  has_accepted_scan_terms: boolean;
   // Integrations (secrets are never returned — only presence flags).
   llm_model: string | null;
   has_llm_key: boolean;

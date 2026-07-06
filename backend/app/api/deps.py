@@ -55,6 +55,24 @@ def get_current_active_user(
     return current_user
 
 
+def ensure_scan_authorized(user: User) -> None:
+    """Raise 403 unless the user has accepted the scan-authorization terms.
+
+    Automated pentesting may only target systems the user is authorized to
+    test; acceptance is the attestation. Mirrors the gate detail shape so the
+    frontend can branch on ``reason == "scan_terms_required"``.
+    """
+    if not user.has_accepted_scan_terms:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "message": "You must accept the scan authorization terms before "
+                "running scans.",
+                "reason": "scan_terms_required",
+            },
+        )
+
+
 def ensure_email_verified(user: User) -> None:
     """Raise 403 unless the user has verified their email.
 

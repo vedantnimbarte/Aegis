@@ -1,6 +1,8 @@
 """User endpoints."""
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
@@ -16,6 +18,22 @@ router = APIRouter(prefix="/users", tags=["users"])
 @router.get("/me", response_model=UserRead)
 def read_current_user(current_user: User = Depends(deps.get_current_active_user)) -> User:
     """Return the authenticated user's profile and subscription status."""
+    return current_user
+
+
+@router.post("/me/accept-scan-terms", response_model=UserRead)
+def accept_scan_terms(
+    current_user: User = Depends(deps.get_current_active_user),
+    db: Session = Depends(get_db),
+) -> User:
+    """Record the user's acceptance of the scan-authorization terms.
+
+    Idempotent — keeps the original acceptance timestamp once set.
+    """
+    if current_user.scan_terms_accepted_at is None:
+        current_user.scan_terms_accepted_at = datetime.now(timezone.utc)
+        db.commit()
+        db.refresh(current_user)
     return current_user
 
 

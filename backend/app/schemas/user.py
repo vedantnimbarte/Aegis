@@ -26,6 +26,7 @@ class UserRead(BaseModel):
     stripe_customer_id: str | None = None
     is_active: bool
     created_at: datetime
+    has_accepted_scan_terms: bool = False
     # Integrations (secrets themselves are never returned).
     llm_model: str | None = None
     has_llm_key: bool = False
