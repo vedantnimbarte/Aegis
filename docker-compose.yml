@@ -36,7 +36,11 @@ services:
       - ./backend:/app
 
   worker:
-    build: ./backend
+    build:
+      context: ./backend
+      # Install the Strix engine into the worker image only.
+      args:
+        INSTALL_STRIX: "true"
     command: celery -A app.workers.celery_app.celery worker --loglevel=info
     env_file: ./backend/.env
     depends_on:

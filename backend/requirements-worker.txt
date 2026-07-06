@@ -1,0 +1,4 @@
+# Extra dependencies installed only into the Celery worker image (not the API).
+# Strix is the autonomous pentesting engine; it requires Python 3.12+ and access
+# to the host Docker socket (it spawns its own sandbox containers).
+strix-agent
