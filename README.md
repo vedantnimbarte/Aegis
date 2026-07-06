@@ -353,7 +353,9 @@ from the dashboard's Repositories page (`GET/POST /schedules`,
 - **Email verification** — email/password sign-ups start unverified and receive a verification link; GitHub logins are trusted as verified. Sign-in works while unverified, but launching scans / connecting repos is gated with a **403** (`reason: email_not_verified`) until the email is confirmed. The dashboard surfaces a banner with a resend action.
 - **Token encryption** — GitHub OAuth tokens are encrypted at rest with AES-256-GCM.
 - **Tenant isolation** — every endpoint validates that the `user_id` from the JWT owns the requested `repository_id` / `scan_id`.
-- **Container isolation** — Strix containers run in an isolated network with no access to host metadata or the backend database; egress is limited to the LLM API and necessary OSINT endpoints.
+- **Rate limiting** — Redis-backed limits on abuse-prone auth endpoints (login/register/forgot/reset/GitHub) to blunt brute-force and signup/email spam.
+- **Scan authorization** — automated pentesting may only target authorized systems; users must accept the scan-authorization terms (a **403** `reason: scan_terms_required` gate) before any scan runs.
+- **Sandbox isolation** — untrusted target code runs in Strix containers on a dedicated Docker-in-Docker daemon (not the host socket), so an escape is contained. Per-scan LLM spend is capped (`STRIX_MAX_BUDGET_USD`). See [SECURITY.md](SECURITY.md) for the full model and production hardening (rootless/sysbox/gVisor, egress limits).
 
 ## Billing & Subscription Gating
 
@@ -402,6 +404,15 @@ Both services are containerized:
 Cloud provisioning (RDS/Redis, DNS, TLS, the ECS/Vercel projects themselves)
 is environment-specific and lives with your infra, not this repo.
 
+**Observability** — `docker compose up` also starts Prometheus (`:9090`) and
+Grafana (`:3002`, admin/admin by default) with a provisioned datasource and an
+"Aegis Overview" dashboard (API rate/latency, scan task throughput). The API
+exposes metrics at `/metrics`; a `celery-exporter` scrapes scan task events.
+
+**Operations & security** — see [OPERATIONS.md](OPERATIONS.md) for DB backup /
+restore and the migration-rollback runbook, and [SECURITY.md](SECURITY.md) for
+the sandbox isolation model and pre-launch hardening.
+
 ## Roadmap
 
 - [x] Web dashboard (Next.js): scan history, detailed reports, PDF export
@@ -421,4 +432,6 @@ See [prd.md](prd.md) and [specs.md](specs.md) for full product and technical det
 
 ## License
 
-Proprietary — all rights reserved (subject to change).
+Proprietary — all rights reserved. See [LICENSE](LICENSE), which includes an
+acceptable-use notice: Aegis may only be pointed at systems you own or are
+explicitly authorized to test.
