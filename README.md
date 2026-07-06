@@ -122,8 +122,8 @@ Aegis/
 
 ### Option A: Docker Compose (recommended)
 
-This brings up PostgreSQL, Redis, the API, the Celery worker, and Celery Beat
-(the recurring-scan scheduler) together.
+This brings up PostgreSQL, Redis, the API, the Celery worker, Celery Beat
+(the recurring-scan scheduler), and the Next.js dashboard together.
 
 ```bash
 # 1. Configure environment
@@ -140,6 +140,7 @@ docker compose exec api alembic upgrade head
 - API: http://localhost:8000
 - Interactive docs (Swagger): http://localhost:8000/docs
 - Health check: http://localhost:8000/health
+- Dashboard: http://localhost:3001
 
 > The worker mounts the host Docker socket (`/var/run/docker.sock`) so Strix can launch sibling containers.
 
@@ -163,8 +164,9 @@ celery -A app.workers.celery_app.celery worker --loglevel=info
 
 ### Running the dashboard (frontend)
 
-The backend options above start only the API and workers. The Next.js dashboard
-is a separate app in [`dashboard/`](dashboard) — run it alongside the backend:
+Option A (Docker Compose) already runs the dashboard at http://localhost:3001.
+To run it **standalone** for local frontend development (hot reload, no rebuild)
+alongside the backend from Option B:
 
 ```bash
 cd dashboard

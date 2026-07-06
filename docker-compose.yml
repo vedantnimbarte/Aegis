@@ -60,5 +60,19 @@ services:
       - redis
       - db
 
+  # Next.js dashboard (standalone build). NEXT_PUBLIC_* is baked at build time,
+  # so the API URL must be the one the browser reaches on the host (not the
+  # in-network `api` hostname). Rebuild after changing it: `docker compose build
+  # dashboard`.
+  dashboard:
+    build:
+      context: ./dashboard
+      args:
+        NEXT_PUBLIC_API_BASE_URL: http://localhost:8000/api/v1
+    ports:
+      - "3001:3000"
+    depends_on:
+      - api
+
 volumes:
   pgdata:
