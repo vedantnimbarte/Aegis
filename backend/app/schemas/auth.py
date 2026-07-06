@@ -18,6 +18,19 @@ class LoginRequest(BaseModel):
     password: str = Field(..., min_length=1, max_length=128)
 
 
+class ForgotPasswordRequest(BaseModel):
+    """Request a password-reset email."""
+
+    email: EmailStr
+
+
+class ResetPasswordRequest(BaseModel):
+    """Complete a password reset with the emailed token."""
+
+    token: str = Field(..., min_length=1)
+    new_password: str = Field(..., min_length=8, max_length=128)
+
+
 class GitHubAuthRequest(BaseModel):
     """Payload the frontend POSTs after the GitHub OAuth redirect returns a code."""
 

@@ -60,6 +60,14 @@ def create_user_with_password(db: Session, *, email: str, password: str) -> User
     return user
 
 
+def set_password(db: Session, user: User, new_password: str) -> User:
+    """Replace the user's password hash (used by the reset flow)."""
+    user.hashed_password = security.get_password_hash(new_password)
+    db.commit()
+    db.refresh(user)
+    return user
+
+
 def authenticate_user(db: Session, *, email: str, password: str) -> Optional[User]:
     """Return the user iff the email/password pair is valid, else None."""
     user = get_user_by_email(db, email.strip().lower())
