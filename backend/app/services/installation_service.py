@@ -25,6 +25,18 @@ def get_by_installation_id(db: Session, installation_id: str) -> Optional[Instal
     ).scalar_one_or_none()
 
 
+def get_by_account(
+    db: Session, user: User, account_login: str
+) -> Optional[Installation]:
+    """Find the user's installation on a given account/org (case-insensitive)."""
+    return db.execute(
+        select(Installation).where(
+            Installation.user_id == user.id,
+            Installation.account_login.ilike(account_login),
+        )
+    ).scalar_one_or_none()
+
+
 def get_installation(
     db: Session, record_id: uuid.UUID, user: User
 ) -> Optional[Installation]:

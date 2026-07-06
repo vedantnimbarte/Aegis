@@ -228,6 +228,110 @@ def update_check_run(
         raise GitHubAppError(f"Failed to update check run (HTTP {resp.status_code})")
 
 
+# --- Git data (auto-fix pull requests) -----------------------------------
+def get_default_branch(token: str, repo_full_name: str) -> tuple[str, str]:
+    """Return the repo's default branch name and its head commit SHA."""
+    with httpx.Client(timeout=_TIMEOUT) as client:
+        resp = client.get(
+            f"{GITHUB_API_BASE}/repos/{repo_full_name}", headers=_token_headers(token)
+        )
+        if resp.status_code != 200:
+            raise GitHubAppError(f"Could not read repository (HTTP {resp.status_code})")
+        branch = resp.json().get("default_branch", "main")
+
+        ref = client.get(
+            f"{GITHUB_API_BASE}/repos/{repo_full_name}/git/ref/heads/{branch}",
+            headers=_token_headers(token),
+        )
+        if ref.status_code != 200:
+            raise GitHubAppError(f"Could not read default branch (HTTP {ref.status_code})")
+    return branch, ref.json()["object"]["sha"]
+
+
+def create_branch(token: str, repo_full_name: str, branch: str, from_sha: str) -> None:
+    with httpx.Client(timeout=_TIMEOUT) as client:
+        resp = client.post(
+            f"{GITHUB_API_BASE}/repos/{repo_full_name}/git/refs",
+            headers=_token_headers(token),
+            json={"ref": f"refs/heads/{branch}", "sha": from_sha},
+        )
+    if resp.status_code != 201:
+        raise GitHubAppError(f"Could not create branch (HTTP {resp.status_code})")
+
+
+def delete_branch(token: str, repo_full_name: str, branch: str) -> None:
+    """Best-effort branch deletion (used to clean up when no fix applied)."""
+    try:
+        with httpx.Client(timeout=_TIMEOUT) as client:
+            client.delete(
+                f"{GITHUB_API_BASE}/repos/{repo_full_name}/git/refs/heads/{branch}",
+                headers=_token_headers(token),
+            )
+    except httpx.HTTPError:
+        pass
+
+
+def get_file_content(
+    token: str, repo_full_name: str, path: str, ref: str
+) -> tuple[str, str]:
+    """Return a file's decoded text and its blob SHA at ``ref``."""
+    with httpx.Client(timeout=_TIMEOUT) as client:
+        resp = client.get(
+            f"{GITHUB_API_BASE}/repos/{repo_full_name}/contents/{path}",
+            headers=_token_headers(token),
+            params={"ref": ref},
+        )
+    if resp.status_code != 200:
+        raise GitHubAppError(f"Could not read {path} (HTTP {resp.status_code})")
+    data = resp.json()
+    try:
+        text = base64.b64decode(data["content"]).decode("utf-8")
+    except (KeyError, ValueError, UnicodeDecodeError) as exc:
+        raise GitHubAppError(f"Could not decode {path}") from exc
+    return text, data["sha"]
+
+
+def put_file_content(
+    token: str,
+    repo_full_name: str,
+    path: str,
+    text: str,
+    *,
+    branch: str,
+    blob_sha: str,
+    message: str,
+) -> None:
+    body = {
+        "message": message,
+        "content": base64.b64encode(text.encode("utf-8")).decode("ascii"),
+        "branch": branch,
+        "sha": blob_sha,
+    }
+    with httpx.Client(timeout=_TIMEOUT) as client:
+        resp = client.put(
+            f"{GITHUB_API_BASE}/repos/{repo_full_name}/contents/{path}",
+            headers=_token_headers(token),
+            json=body,
+        )
+    if resp.status_code not in (200, 201):
+        raise GitHubAppError(f"Could not commit {path} (HTTP {resp.status_code})")
+
+
+def create_pull_request(
+    token: str, repo_full_name: str, *, title: str, head: str, base: str, body: str
+) -> str:
+    """Open a PR and return its html_url."""
+    with httpx.Client(timeout=_TIMEOUT) as client:
+        resp = client.post(
+            f"{GITHUB_API_BASE}/repos/{repo_full_name}/pulls",
+            headers=_token_headers(token),
+            json={"title": title, "head": head, "base": base, "body": body},
+        )
+    if resp.status_code != 201:
+        raise GitHubAppError(f"Could not open pull request (HTTP {resp.status_code})")
+    return resp.json()["html_url"]
+
+
 # --- Pure helpers ---------------------------------------------------------
 def fail_severities() -> set[str]:
     return {
