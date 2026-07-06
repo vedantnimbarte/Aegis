@@ -4,7 +4,7 @@
 
 Aegis is a SaaS platform powered by the open-source [Strix](https://github.com/usestrix/strix) AI engine. It provides automated, continuous penetration testing for web applications and APIs. Unlike traditional SAST tools that flood developers with false positives, Aegis uses Strix's autonomous AI agents to dynamically execute code, validate vulnerabilities, and deliver real Proof-of-Concept (PoC) exploits with actionable remediation.
 
-> **Status:** Feature-complete against the PRD (MVP + post-MVP): auth (email/password + GitHub OAuth, password reset, email verification), Stripe subscription gating, the full Strix scan worker, the Next.js dashboard with PDF export, scheduled recurring scans, the CI/CD GitHub App, authenticated grey-box testing, and auto-fix pull requests.
+> **Status:** Feature-complete against the PRD (MVP + post-MVP): auth (email/password + GitHub OAuth, password reset, email verification), Stripe subscription gating, the full Strix scan worker, the Next.js dashboard with PDF export, scheduled recurring scans, the CI/CD GitHub App, authenticated grey-box testing, auto-fix pull requests, and Pro integrations (bring-your-own LLM key, Slack notifications).
 
 ---
 
@@ -23,6 +23,7 @@ Aegis is a SaaS platform powered by the open-source [Strix](https://github.com/u
 - [Data Model](#data-model)
 - [Scan Lifecycle](#scan-lifecycle)
 - [Security Model](#security-model)
+- [Deployment](#deployment)
 - [Roadmap](#roadmap)
 - [License](#license)
 
@@ -35,7 +36,8 @@ Aegis is a SaaS platform powered by the open-source [Strix](https://github.com/u
 - **Configurable scans** — Quick, standard, and deep scan modes with optional custom instructions (e.g. "focus on business logic and IDOR").
 - **Asynchronous Strix execution** — Long-running pentests run as Celery jobs against isolated, ephemeral Docker containers so the API never blocks.
 - **Validated findings** — Each vulnerability captures severity, OWASP/CVSS context, reproduction steps, a working PoC, and AI-generated remediation.
-- **Subscription tiers** — Starter, Pro, and Enterprise plans, gated via Stripe (billing integration in progress).
+- **Subscription tiers** — Starter, Pro, and Enterprise plans, gated via Stripe.
+- **Pro integrations** — Bring-your-own LLM key/model (BYOK) so scans run on your own provider account, and Slack notifications when a scan finishes.
 
 ## Architecture
 
@@ -43,7 +45,7 @@ Aegis uses a decoupled, service-oriented architecture that handles long-running 
 
 ```
                        ┌──────────────┐
-                       │   Frontend   │  Next.js (planned)
+                       │  Dashboard   │  Next.js (./dashboard)
                        │ (React/Vercel)│
                        └──────┬───────┘
                               │ HTTPS / JWT
@@ -76,7 +78,7 @@ Aegis uses a decoupled, service-oriented architecture that handles long-running 
 | Auth / crypto  | JWT (python-jose), bcrypt, AES-256-GCM (cryptography) |
 | Integrations   | GitHub OAuth (httpx), Stripe, Docker Engine API       |
 | Security engine| Strix (autonomous AI pentesting agents)               |
-| Frontend       | Next.js, Tailwind CSS, shadcn/ui *(planned)*          |
+| Dashboard      | Next.js, Tailwind CSS, React Query (`./dashboard`)   |
 
 ## Project Structure
 
@@ -361,6 +363,25 @@ Configure `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_STARTER`,
 webhook at `/api/v1/billing/webhook` (locally: `stripe listen --forward-to
 localhost:8000/api/v1/billing/webhook`).
 
+## Deployment
+
+CI runs on every push/PR via [`.github/workflows/ci.yml`](.github/workflows/ci.yml):
+backend unit tests (`pytest`) and a dashboard type-check (`tsc --noEmit`).
+
+Both services are containerized:
+
+- **Backend / worker** — `backend/Dockerfile` (the worker image sets
+  `INSTALL_STRIX=true`). Deploy to any container host (AWS ECS, DigitalOcean App
+  Platform, Fly.io) with a managed PostgreSQL and Redis. Run migrations
+  (`alembic upgrade head`) on release and inject secrets via the platform's
+  secret store (never bake them into the image).
+- **Dashboard** — `dashboard/Dockerfile` produces a standalone Next.js server,
+  or deploy it straight to Vercel from source. Set `NEXT_PUBLIC_API_BASE_URL`
+  to the public API URL at build time.
+
+Cloud provisioning (RDS/Redis, DNS, TLS, the ECS/Vercel projects themselves)
+is environment-specific and lives with your infra, not this repo.
+
 ## Roadmap
 
 - [x] Web dashboard (Next.js): scan history, detailed reports, PDF export
@@ -370,6 +391,11 @@ localhost:8000/api/v1/billing/webhook`).
 - [x] Authenticated (grey-box) testing behind login walls
 - [x] Auto-fix — open PRs with AI-suggested patches
 - [x] Scheduled recurring scans for continuous attack-surface monitoring
+- [x] BYOK — bring your own LLM key/model (Pro & above)
+- [x] Slack notifications on scan completion
+- [x] CI — GitHub Actions running backend tests + dashboard type-check
+- [ ] Enterprise (sales-led): SAML/SSO and Jira integration — not built; these
+      need an IdP / Jira tenant and are provisioned per-contract.
 
 See [prd.md](prd.md) and [specs.md](specs.md) for full product and technical details.
 
