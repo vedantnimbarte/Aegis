@@ -221,6 +221,8 @@ export const api = {
   getScan: (id: string) => request<Scan>(`/scans/${id}`),
   getReport: (id: string) => request<ScanReport>(`/scans/${id}/report`),
   getReportPdf: (id: string) => requestBlob(`/scans/${id}/report.pdf`),
+  generateFixPr: (id: string) =>
+    request<{ pull_request_url: string }>(`/scans/${id}/autofix`, { method: "POST" }),
 
   // --- Schedules ---
   listSchedules: () => request<Schedule[]>("/schedules"),

@@ -1,15 +1,17 @@
 "use client";
 
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft,
   ChevronDown,
   Download,
+  GitPullRequest,
   Radar,
   ShieldCheck,
   FileWarning,
   Loader2,
   AlertTriangle,
+  Wrench,
 } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
@@ -19,11 +21,12 @@ import {
   Button,
   Card,
   ErrorState,
+  Pill,
   SeverityBadge,
   Spinner,
   StatusBadge,
 } from "@/components/ui";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 import {
   formatDate,
   formatDuration,
@@ -230,6 +233,8 @@ function Report({ report }: { report: ScanReport }) {
         </div>
       </Card>
 
+      <AutofixCard report={report} />
+
       {/* Findings grouped by severity */}
       <div className="space-y-3">
         {SEVERITY_ORDER.flatMap((sev) =>
@@ -239,6 +244,87 @@ function Report({ report }: { report: ScanReport }) {
         ))}
       </div>
     </>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+function AutofixCard({ report }: { report: ScanReport }) {
+  const queryClient = useQueryClient();
+  const scan = report.scan;
+
+  const autofix = useMutation({
+    mutationFn: () => api.generateFixPr(scan.id),
+    onSuccess: ({ pull_request_url }) => {
+      queryClient.invalidateQueries({ queryKey: ["scan", scan.id] });
+      queryClient.invalidateQueries({ queryKey: ["report", scan.id] });
+      window.open(pull_request_url, "_blank", "noopener");
+    },
+  });
+
+  // Already opened a PR.
+  if (scan.autofix_pr_url) {
+    return (
+      <Card className="mb-6 flex flex-col gap-2 p-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-center gap-2.5 text-[13px] text-fg">
+          <GitPullRequest className="h-4 w-4 shrink-0 text-signal" strokeWidth={2} />
+          Auto-fix pull request opened.
+        </div>
+        <a
+          href={scan.autofix_pr_url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-cyan-soft hover:text-cyan"
+        >
+          View pull request →
+        </a>
+      </Card>
+    );
+  }
+
+  if (report.fixable_count === 0) return null;
+
+  const err = autofix.error instanceof ApiError ? autofix.error : null;
+  const needsInstall = err?.reason === "no_installation";
+  const needsUpgrade = err?.status === 402;
+
+  return (
+    <Card className="mb-6 p-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-center gap-2.5">
+          <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-cyan/40 bg-cyan/10 text-cyan-soft">
+            <Wrench className="h-4 w-4" strokeWidth={2} />
+          </span>
+          <p className="text-[13px] leading-relaxed text-fg">
+            {report.fixable_count} finding{report.fixable_count !== 1 ? "s have" : " has"}{" "}
+            a suggested fix. Open a pull request applying{" "}
+            {report.fixable_count !== 1 ? "them" : "it"}.
+          </p>
+        </div>
+        <Button
+          icon={GitPullRequest}
+          loading={autofix.isPending}
+          onClick={() => autofix.mutate()}
+          className="shrink-0"
+        >
+          Generate fix PR
+        </Button>
+      </div>
+
+      {err ? (
+        <div className="mt-3 space-y-2">
+          <ErrorState message={err.message} />
+          {needsInstall ? (
+            <Link href="/settings" className="text-[12px] font-medium text-cyan-soft hover:text-cyan">
+              Install the GitHub App →
+            </Link>
+          ) : needsUpgrade ? (
+            <Link href="/billing" className="text-[12px] font-medium text-cyan-soft hover:text-cyan">
+              View plans & upgrade →
+            </Link>
+          ) : null}
+        </div>
+      ) : null}
+    </Card>
   );
 }
 
@@ -257,6 +343,14 @@ function VulnerabilityCard({ vuln }: { vuln: Vulnerability }) {
           <span className="min-w-0 flex-1 truncate font-display text-[14px] font-semibold text-fg">
             {vuln.title}
           </span>
+          {vuln.has_fix ? (
+            <span className="hidden shrink-0 sm:inline">
+              <Pill tone="border-signal/30 bg-signal/10 text-signal">
+                <Wrench className="h-3 w-3" strokeWidth={2} />
+                Fix
+              </Pill>
+            </span>
+          ) : null}
           {vuln.cvss_score != null ? (
             <span className="hidden shrink-0 font-mono text-[11px] text-muted sm:inline">
               CVSS {vuln.cvss_score.toFixed(1)}

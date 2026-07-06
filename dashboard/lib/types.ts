@@ -77,6 +77,7 @@ export interface Scan {
   scan_mode: ScanMode;
   trigger: ScanTrigger;
   github_pr_number: number | null;
+  autofix_pr_url: string | null;
   custom_instructions: string | null;
   error_message: string | null;
   started_at: string | null;
@@ -94,12 +95,14 @@ export interface Vulnerability {
   owasp_category: string | null;
   cvss_score: number | null;
   file_path: string | null;
+  has_fix: boolean;
 }
 
 export interface ScanReport {
   scan: Scan;
   total: number;
   counts_by_severity: Record<Severity, number>;
+  fixable_count: number;
   vulnerabilities: Vulnerability[];
 }
 
