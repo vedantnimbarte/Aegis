@@ -55,6 +55,13 @@ class Settings(BaseSettings):
     # --- Stripe -----------------------------------------------------------
     STRIPE_SECRET_KEY: str = ""
     STRIPE_WEBHOOK_SECRET: str = ""
+    # Recurring Price IDs for each self-serve tier (from the Stripe dashboard).
+    # Enterprise is sales-led and has no self-serve price.
+    STRIPE_PRICE_STARTER: str = ""
+    STRIPE_PRICE_PRO: str = ""
+    # Where Stripe Checkout / the billing portal return the user. Points at the
+    # dashboard app (see ../dashboard). No trailing slash.
+    DASHBOARD_URL: str = "http://localhost:3001"
 
     # --- LLM providers (passed through to Strix) -------------------------
     # Model id in LiteLLM `provider/model` form, e.g. "openai/gpt-4o" or

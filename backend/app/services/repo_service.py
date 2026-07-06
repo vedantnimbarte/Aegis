@@ -36,6 +36,18 @@ def get_repository(
     ).scalar_one_or_none()
 
 
+def get_by_github_id(
+    db: Session, user: User, github_repo_id: str
+) -> Optional[Repository]:
+    """Fetch a user's connected repo by its GitHub id, if any."""
+    return db.execute(
+        select(Repository).where(
+            Repository.user_id == user.id,
+            Repository.github_repo_id == github_repo_id,
+        )
+    ).scalar_one_or_none()
+
+
 def sync_repository(
     db: Session, user: User, payload: RepositorySyncRequest
 ) -> Repository:
