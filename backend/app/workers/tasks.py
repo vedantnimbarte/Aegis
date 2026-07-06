@@ -21,10 +21,10 @@ from celery.utils.log import get_task_logger
 
 from app.core.config import settings
 from app.db.session import SessionLocal
-from app.models.enums import ScanStatus
+from app.models.enums import ScanStatus, ScanTrigger, Severity
 from app.models.scan import Scan
 from app.models.vulnerability import Vulnerability
-from app.services import repo_checkout, strix_report, strix_runner
+from app.services import github_app, repo_checkout, strix_report, strix_runner
 from app.workers.celery_app import celery
 
 logger = get_task_logger(__name__)
@@ -45,13 +45,25 @@ def run_strix_scan(self, scan_id: str) -> dict:
             return {"scan_id": scan_id, "status": "missing"}
 
         repo = scan.repository
-        github_token = repo.user.github_token  # decrypted on read
+        is_pr = _is_pr_scan(scan)
 
         _mark_running(db, scan)
         logger.info("Scan %s running: repo=%s mode=%s", scan_id, repo.name, scan.scan_mode.value)
 
+        # PR scans clone with a GitHub App installation token at the PR commit;
+        # everything else clones the default branch with the user's OAuth token.
+        if is_pr:
+            clone_token = github_app.get_installation_token(scan.github_installation_id)
+            clone_ref = scan.github_commit_sha
+            _start_pr_check(db, scan, clone_token)
+        else:
+            clone_token = repo.user.github_token  # decrypted on read
+            clone_ref = None
+
         repo_dir = workdir / "repo"
-        repo_checkout.clone_repository(repo.url, repo_dir, github_token=github_token)
+        repo_checkout.clone_repository(
+            repo.url, repo_dir, github_token=clone_token, ref=clone_ref
+        )
 
         run_dir = strix_runner.run_strix(
             target_dir=repo_dir,
@@ -64,11 +76,15 @@ def run_strix_scan(self, scan_id: str) -> dict:
         _persist_findings(db, scan, findings)
         _mark_completed(db, scan)
 
+        if is_pr:
+            _report_pr_result(scan, findings)
+
         logger.info("Scan %s completed with %d finding(s)", scan_id, len(findings))
         return {"scan_id": scan_id, "status": ScanStatus.COMPLETED.value, "findings": len(findings)}
 
     except SoftTimeLimitExceeded:
         _fail(db, scan_id, "Scan exceeded the maximum allowed run time.")
+        _report_pr_failure(db, scan_id)
         raise
     except (
         repo_checkout.CheckoutError,
@@ -78,14 +94,89 @@ def run_strix_scan(self, scan_id: str) -> dict:
         # Expected, user-actionable failures (bad repo, engine/report error).
         logger.warning("Scan %s failed: %s", scan_id, exc)
         _fail(db, scan_id, str(exc))
+        _report_pr_failure(db, scan_id)
         return {"scan_id": scan_id, "status": ScanStatus.FAILED.value}
     except Exception as exc:  # noqa: BLE001 - last-resort guard so the row never stays 'running'
         logger.exception("Scan %s failed unexpectedly", scan_id)
         _fail(db, scan_id, f"Unexpected error: {exc}")
+        _report_pr_failure(db, scan_id)
         return {"scan_id": scan_id, "status": ScanStatus.FAILED.value}
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
         db.close()
+
+
+# --- GitHub pull-request feedback ----------------------------------------
+def _is_pr_scan(scan: Scan) -> bool:
+    return scan.trigger == ScanTrigger.PULL_REQUEST and bool(scan.github_installation_id)
+
+
+def _severity_counts(findings: list[strix_report.ParsedFinding]) -> dict[str, int]:
+    counts = {s.value: 0 for s in Severity}
+    for f in findings:
+        counts[f.severity.value] += 1
+    return counts
+
+
+def _report_url(scan: Scan) -> str:
+    return f"{settings.DASHBOARD_URL}/scans/{scan.id}"
+
+
+def _start_pr_check(db, scan: Scan, token: str) -> None:
+    """Open an in-progress check run so the PR shows Aegis is running."""
+    try:
+        check_run_id = github_app.create_check_run(
+            token, scan.repository.name, scan.github_commit_sha
+        )
+        if check_run_id:
+            scan.github_check_run_id = check_run_id
+            db.commit()
+    except Exception:  # noqa: BLE001 - feedback must never break the scan
+        logger.exception("Failed to open check run for scan %s", scan.id)
+
+
+def _report_pr_result(scan: Scan, findings: list[strix_report.ParsedFinding]) -> None:
+    try:
+        counts = _severity_counts(findings)
+        total = len(findings)
+        token = github_app.get_installation_token(scan.github_installation_id)
+        repo_full = scan.repository.name
+
+        body = github_app.format_findings_comment(
+            counts, findings, total=total, report_url=_report_url(scan)
+        )
+        github_app.upsert_pr_comment(token, repo_full, scan.github_pr_number, body)
+
+        if scan.github_check_run_id:
+            title, summary = github_app.check_summary(total, counts)
+            github_app.update_check_run(
+                token,
+                repo_full,
+                scan.github_check_run_id,
+                conclusion=github_app.check_conclusion(counts),
+                title=title,
+                summary=summary,
+            )
+    except Exception:  # noqa: BLE001
+        logger.exception("Failed to report PR result for scan %s", scan.id)
+
+
+def _report_pr_failure(db, scan_id: str) -> None:
+    scan = db.get(Scan, uuid.UUID(scan_id))
+    if scan is None or not _is_pr_scan(scan) or not scan.github_check_run_id:
+        return
+    try:
+        token = github_app.get_installation_token(scan.github_installation_id)
+        github_app.update_check_run(
+            token,
+            scan.repository.name,
+            scan.github_check_run_id,
+            conclusion="neutral",
+            title="Scan did not complete",
+            summary=scan.error_message or "The Aegis scan failed to complete.",
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("Failed to report PR failure for scan %s", scan_id)
 
 
 def _mark_running(db, scan: Scan) -> None:
@@ -172,6 +263,7 @@ def enqueue_due_scheduled_scans(self) -> dict:
                 repository_id=repo.id,
                 scan_mode=schedule.scan_mode,
                 custom_instructions=schedule.custom_instructions,
+                trigger=ScanTrigger.SCHEDULED,
             )
             dispatched += 1
 

@@ -25,46 +25,56 @@ def clone_repository(
     dest: Path,
     *,
     github_token: Optional[str] = None,
+    ref: Optional[str] = None,
     timeout: Optional[int] = None,
 ) -> Path:
-    """Shallow-clone ``repo_url`` into ``dest`` and return ``dest``.
+    """Shallow-check-out ``repo_url`` into ``dest`` and return ``dest``.
 
-    Raises ``CheckoutError`` on any git failure, with the token (if any)
+    Without ``ref`` this shallow-clones the default branch. With ``ref`` (a
+    commit SHA, e.g. a pull-request head) it fetches just that commit and checks
+    it out. Raises ``CheckoutError`` on any git failure, with the token (if any)
     scrubbed from the message.
     """
     dest.parent.mkdir(parents=True, exist_ok=True)
     clone_url = _authenticated_url(repo_url, github_token)
+    limit = timeout or settings.GIT_CLONE_TIMEOUT_SECONDS
 
+    if ref:
+        # Fetch a single commit into a fresh repo, then check it out. Shallow
+        # cloning the default branch wouldn't necessarily contain the PR SHA.
+        dest.mkdir(parents=True, exist_ok=True)
+        _git(["init", "-q", str(dest)], github_token, limit)
+        _git(["-C", str(dest), "remote", "add", "origin", clone_url], github_token, limit)
+        _git(["-C", str(dest), "fetch", "--depth", "1", "origin", ref], github_token, limit)
+        _git(["-C", str(dest), "checkout", "-q", "FETCH_HEAD"], github_token, limit)
+    else:
+        _git(
+            ["clone", "--depth", "1", "--single-branch", "--no-tags", clone_url, str(dest)],
+            github_token,
+            limit,
+        )
+    return dest
+
+
+def _git(args: list[str], token: Optional[str], timeout: int) -> None:
+    """Run a git command, raising ``CheckoutError`` (token-scrubbed) on failure."""
     try:
         proc = subprocess.run(
-            [
-                "git",
-                "clone",
-                "--depth",
-                "1",
-                "--single-branch",
-                "--no-tags",
-                clone_url,
-                str(dest),
-            ],
+            ["git", *args],
             capture_output=True,
             text=True,
-            timeout=timeout or settings.GIT_CLONE_TIMEOUT_SECONDS,
+            timeout=timeout,
             # Never let git prompt for credentials on a private/bad URL — fail fast.
             env={"GIT_TERMINAL_PROMPT": "0", "GIT_ASKPASS": "", "PATH": _path()},
         )
     except FileNotFoundError as exc:  # git not installed in the image
         raise CheckoutError("git executable not found on the worker") from exc
     except subprocess.TimeoutExpired as exc:
-        raise CheckoutError(
-            f"Cloning the repository timed out after {exc.timeout:.0f}s"
-        ) from exc
+        raise CheckoutError(f"git timed out after {exc.timeout:.0f}s") from exc
 
     if proc.returncode != 0:
-        detail = _scrub(proc.stderr.strip() or proc.stdout.strip(), github_token)
-        raise CheckoutError(f"git clone failed: {detail}")
-
-    return dest
+        detail = _scrub(proc.stderr.strip() or proc.stdout.strip(), token)
+        raise CheckoutError(f"git {args[0]} failed: {detail}")
 
 
 def _authenticated_url(repo_url: str, token: Optional[str]) -> str:
