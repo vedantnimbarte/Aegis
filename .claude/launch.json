@@ -2,14 +2,6 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "aegis-web",
-      "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev"],
-      "port": 3000,
-      "autoPort": true,
-      "cwd": "frontend"
-    },
-    {
       "name": "aegis-dashboard",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev"],

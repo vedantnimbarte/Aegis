@@ -2,8 +2,7 @@
 
 The authenticated web app for Aegis — sign in with GitHub, connect repositories,
 launch Strix pentests, and read validated findings. It's a standalone Next.js
-app kept separate from the marketing site in [`../frontend`](../frontend) but
-sharing its design tokens.
+app that talks to the FastAPI backend in [`../backend`](../backend).
 
 ## Stack
 
