@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import uuid
-from typing import TYPE_CHECKING, List
+from typing import TYPE_CHECKING, List, Optional
 
 from sqlalchemy import ForeignKey, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
@@ -12,6 +12,7 @@ from app.db.base_class import Base, TimestampMixin, UUIDMixin
 
 if TYPE_CHECKING:
     from app.models.scan import Scan
+    from app.models.schedule import Schedule
     from app.models.user import User
 
 
@@ -38,6 +39,11 @@ class Repository(UUIDMixin, TimestampMixin, Base):
         back_populates="repository",
         cascade="all, delete-orphan",
         order_by="desc(Scan.created_at)",
+    )
+    schedule: Mapped[Optional["Schedule"]] = relationship(
+        back_populates="repository",
+        cascade="all, delete-orphan",
+        uselist=False,
     )
 
     def __repr__(self) -> str:  # pragma: no cover
