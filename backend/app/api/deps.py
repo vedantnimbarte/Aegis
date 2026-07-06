@@ -53,3 +53,19 @@ def get_current_active_user(
             status_code=status.HTTP_403_FORBIDDEN, detail="Inactive user"
         )
     return current_user
+
+
+def ensure_email_verified(user: User) -> None:
+    """Raise 403 unless the user has verified their email.
+
+    Mirrors the billing gate's ``{message, reason}`` detail shape so the
+    frontend can branch on ``reason == "email_not_verified"``.
+    """
+    if not user.email_verified:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "message": "Verify your email address before running scans.",
+                "reason": "email_not_verified",
+            },
+        )

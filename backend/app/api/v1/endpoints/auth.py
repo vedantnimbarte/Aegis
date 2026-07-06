@@ -5,9 +5,11 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from jose import JWTError
 from sqlalchemy.orm import Session
 
+from app.api import deps
 from app.core import security
 from app.core.config import settings
 from app.db.session import get_db
+from app.models.user import User
 from app.schemas.auth import (
     ForgotPasswordRequest,
     GitHubAuthRequest,
@@ -15,6 +17,7 @@ from app.schemas.auth import (
     RefreshRequest,
     RegisterRequest,
     ResetPasswordRequest,
+    VerifyEmailRequest,
 )
 from app.schemas.token import Token
 from app.services import email as email_service
@@ -31,9 +34,25 @@ def _issue_tokens(user_id) -> Token:
     )
 
 
+def _dispatch_verification_email(background_tasks: BackgroundTasks, user: User) -> None:
+    token = security.create_email_verification_token(user.id)
+    verify_url = f"{settings.DASHBOARD_URL}/verify-email?token={token}"
+    background_tasks.add_task(
+        email_service.send_verification_email, user.email, verify_url
+    )
+
+
 @router.post("/register", response_model=Token, status_code=status.HTTP_201_CREATED)
-def register(payload: RegisterRequest, db: Session = Depends(get_db)) -> Token:
-    """Create an account with email + password and return a JWT pair."""
+def register(
+    payload: RegisterRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+) -> Token:
+    """Create an account, email a verification link, and return a JWT pair.
+
+    Sign-in works immediately, but scanning stays gated until the email is
+    verified (see the scans endpoint).
+    """
     try:
         user = user_service.create_user_with_password(
             db, email=payload.email, password=payload.password
@@ -43,7 +62,42 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)) -> Token:
             status.HTTP_409_CONFLICT,
             detail="An account with this email already exists",
         )
+    _dispatch_verification_email(background_tasks, user)
     return _issue_tokens(user.id)
+
+
+@router.post("/verify-email")
+def verify_email(payload: VerifyEmailRequest, db: Session = Depends(get_db)) -> dict:
+    """Confirm an email address with the emailed token (idempotent)."""
+    invalid = HTTPException(
+        status.HTTP_400_BAD_REQUEST,
+        detail="This verification link is invalid or has expired.",
+    )
+    try:
+        claims = security.decode_token(payload.token)
+    except JWTError:
+        raise invalid
+    if claims.get("type") != security.EMAIL_VERIFY_TOKEN_TYPE:
+        raise invalid
+
+    subject = claims.get("sub")
+    user = user_service.get_user_by_id(db, subject) if subject else None
+    if user is None or not user.is_active:
+        raise invalid
+
+    user_service.mark_email_verified(db, user)
+    return {"detail": "Your email has been verified."}
+
+
+@router.post("/resend-verification", status_code=status.HTTP_202_ACCEPTED)
+def resend_verification(
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(deps.get_current_active_user),
+) -> dict:
+    """Re-send the verification email to the signed-in user (no-op if verified)."""
+    if not current_user.email_verified:
+        _dispatch_verification_email(background_tasks, current_user)
+    return {"detail": "If your email is unverified, a new link has been sent."}
 
 
 @router.post("/login", response_model=Token)

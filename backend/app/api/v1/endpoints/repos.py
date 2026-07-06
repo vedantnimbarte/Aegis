@@ -55,6 +55,7 @@ def sync_repository(
         db, current_user, payload.github_repo_id
     )
     if already_connected is None:
+        deps.ensure_email_verified(current_user)
         try:
             billing.assert_can_connect_repo(db, current_user)
         except billing.PaymentRequiredError as exc:
