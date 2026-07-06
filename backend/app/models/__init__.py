@@ -12,6 +12,7 @@ from app.models.enums import (
     Severity,
     SubscriptionTier,
 )
+from app.models.greybox import GreyboxConfig
 from app.models.installation import Installation
 from app.models.repository import Repository
 from app.models.scan import Scan
@@ -26,6 +27,7 @@ __all__ = [
     "Scan",
     "Schedule",
     "Installation",
+    "GreyboxConfig",
     "Vulnerability",
     "SubscriptionTier",
     "ScanStatus",

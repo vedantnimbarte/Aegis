@@ -11,6 +11,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.base_class import Base, TimestampMixin, UUIDMixin
 
 if TYPE_CHECKING:
+    from app.models.greybox import GreyboxConfig
     from app.models.scan import Scan
     from app.models.schedule import Schedule
     from app.models.user import User
@@ -45,6 +46,16 @@ class Repository(UUIDMixin, TimestampMixin, Base):
         cascade="all, delete-orphan",
         uselist=False,
     )
+    greybox: Mapped[Optional["GreyboxConfig"]] = relationship(
+        back_populates="repository",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
+
+    @property
+    def has_greybox(self) -> bool:
+        """Whether authenticated (grey-box) testing is configured."""
+        return self.greybox is not None
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"<Repository id={self.id} name={self.name!r}>"
