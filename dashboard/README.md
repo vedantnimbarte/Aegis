@@ -34,12 +34,17 @@ npm run dev                  # http://localhost:3001
 
 ## How auth works
 
-1. `/login` sends the user to GitHub's OAuth authorize URL with a CSRF `state`.
-2. GitHub redirects back to `/auth/callback?code=…&state=…`; the page verifies
-   `state`, then POSTs the `code` to `POST /api/v1/auth/github`.
-3. The backend returns an access + refresh token pair, persisted in
-   `localStorage`. The API client attaches the access token and transparently
-   refreshes once on a `401` before retrying.
+`/login` offers two paths:
+
+- **Email / password** — sign in or create an account, POSTing to
+  `POST /api/v1/auth/login` or `/auth/register`.
+- **GitHub** — sends the user to GitHub's OAuth authorize URL with a CSRF
+  `state`; GitHub redirects back to `/auth/callback?code=…&state=…`, which
+  verifies `state` and POSTs the `code` to `POST /api/v1/auth/github`.
+
+Either path returns an access + refresh token pair, persisted in
+`localStorage`. The API client attaches the access token and transparently
+refreshes once on a `401` before retrying.
 
 ## Structure
 
@@ -48,7 +53,7 @@ dashboard/
 ├── app/
 │   ├── layout.tsx            # fonts + providers
 │   ├── providers.tsx         # React Query + AuthProvider
-│   ├── login/                # GitHub sign-in
+│   ├── login/                # email/password + GitHub sign-in
 │   ├── auth/callback/        # OAuth code exchange
 │   └── (app)/                # authenticated route group (guard + shell)
 │       ├── page.tsx          # Overview: metrics + recent scans
@@ -68,4 +73,4 @@ prompt (see `NewScanAction` and the 402 handling in the repos / new-scan flows).
 
 ## Roadmap (not yet built)
 
-- Email/password auth (backend currently exposes GitHub OAuth only)
+- Password reset / email verification flows

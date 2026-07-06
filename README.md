@@ -205,6 +205,8 @@ All endpoints are versioned under `/api/v1`.
 | Endpoint              | Method | Auth | Description                                          |
 | --------------------- | ------ | ---- | ---------------------------------------------------- |
 | `/health`             | GET    | No   | Service health / environment                         |
+| `/auth/register`      | POST   | No   | Create an account with email + password; issues a JWT |
+| `/auth/login`         | POST   | No   | Authenticate with email + password; issues a JWT     |
 | `/auth/github`        | POST   | No   | Handles GitHub OAuth callback and issues a JWT       |
 | `/users/me`           | GET    | Yes  | Current user profile and subscription status         |
 | `/repos`              | GET    | Yes  | List authorized GitHub repositories                  |
