@@ -44,13 +44,31 @@ services:
     # `-E` emits task events for the Prometheus celery-exporter.
     command: celery -A app.workers.celery_app.celery worker --loglevel=info -E
     env_file: ./backend/.env
+    environment:
+      # Strix spawns its sandbox containers on the isolated dind daemon rather
+      # than the host socket, so an escape can't reach the host's Docker/root.
+      DOCKER_HOST: tcp://dind:2375
     depends_on:
       - api
       - redis
+      - dind
     volumes:
       - ./backend:/app
-      # Strix runs sibling Docker containers, so mount the host Docker socket.
-      - /var/run/docker.sock:/var/run/docker.sock
+      # Shared with dind so Strix's bind-mounts of the checkout resolve in both.
+      - scandata:/tmp/aegis-scans
+
+  # Isolated Docker daemon for Strix's sandbox containers (see SECURITY.md).
+  # Running untrusted target code here contains a breakout to this container
+  # instead of the host. It is privileged — for stronger isolation in
+  # production, front it with rootless Docker / sysbox / gVisor and restrict
+  # egress to the LLM + OSINT endpoints only.
+  dind:
+    image: docker:27-dind
+    privileged: true
+    environment:
+      DOCKER_TLS_CERTDIR: ""   # plain TCP on the internal network only
+    volumes:
+      - scandata:/tmp/aegis-scans
 
   # Celery Beat — ticks periodically and dispatches due recurring scans.
   beat:
@@ -121,3 +139,4 @@ volumes:
   dashboard_node_modules:
   promdata:
   grafanadata:
+  scandata:
