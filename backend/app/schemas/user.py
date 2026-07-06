@@ -17,6 +17,7 @@ class UserRead(BaseModel):
 
     id: uuid.UUID
     email: str
+    email_verified: bool
     github_username: str | None = None
     subscription_tier: SubscriptionTier
     subscription_status: SubscriptionStatus

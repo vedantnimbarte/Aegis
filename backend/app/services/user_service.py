@@ -68,6 +68,15 @@ def set_password(db: Session, user: User, new_password: str) -> User:
     return user
 
 
+def mark_email_verified(db: Session, user: User) -> User:
+    """Flag the user's email as verified (idempotent)."""
+    if not user.email_verified:
+        user.email_verified = True
+        db.commit()
+        db.refresh(user)
+    return user
+
+
 def authenticate_user(db: Session, *, email: str, password: str) -> Optional[User]:
     """Return the user iff the email/password pair is valid, else None."""
     user = get_user_by_email(db, email.strip().lower())
@@ -99,11 +108,15 @@ def upsert_user_from_github(
             email=email,
             github_username=github_username,
             github_token=github_token,
+            # GitHub only returns verified emails, so trust it.
+            email_verified=True,
         )
         db.add(user)
     else:
         user.github_username = github_username
         user.github_token = github_token
+        # A GitHub login confirms ownership of the email.
+        user.email_verified = True
 
     db.commit()
     db.refresh(user)

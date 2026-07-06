@@ -18,6 +18,12 @@ class LoginRequest(BaseModel):
     password: str = Field(..., min_length=1, max_length=128)
 
 
+class VerifyEmailRequest(BaseModel):
+    """Confirm an email address using the emailed token."""
+
+    token: str = Field(..., min_length=1)
+
+
 class ForgotPasswordRequest(BaseModel):
     """Request a password-reset email."""
 
