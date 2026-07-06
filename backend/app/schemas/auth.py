@@ -1,7 +1,21 @@
 """Authentication request schemas."""
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, EmailStr, Field
+
+
+class RegisterRequest(BaseModel):
+    """Email/password sign-up payload."""
+
+    email: EmailStr
+    password: str = Field(..., min_length=8, max_length=128)
+
+
+class LoginRequest(BaseModel):
+    """Email/password sign-in payload."""
+
+    email: EmailStr
+    password: str = Field(..., min_length=1, max_length=128)
 
 
 class GitHubAuthRequest(BaseModel):
