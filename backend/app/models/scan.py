@@ -5,12 +5,12 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING, List, Optional
 
-from sqlalchemy import DateTime, ForeignKey, String, Text
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base_class import Base, TimestampMixin, UUIDMixin, str_enum
-from app.models.enums import ScanMode, ScanStatus
+from app.models.enums import ScanMode, ScanStatus, ScanTrigger
 
 if TYPE_CHECKING:
     from app.models.repository import Repository
@@ -43,6 +43,19 @@ class Scan(UUIDMixin, TimestampMixin, Base):
 
     # Optional free-text instructions passed to Strix agents.
     custom_instructions: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # What kicked off this scan (manual / scheduled / pull_request).
+    trigger: Mapped[ScanTrigger] = mapped_column(
+        str_enum(ScanTrigger, "scan_trigger"),
+        default=ScanTrigger.MANUAL,
+        server_default=ScanTrigger.MANUAL.value,
+        nullable=False,
+    )
+    # Pull-request context (set only for GitHub App / pull_request scans).
+    github_installation_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    github_pr_number: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    github_commit_sha: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    github_check_run_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
 
     # Celery task id, so the API can trace a scan back to its worker job.
     celery_task_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)

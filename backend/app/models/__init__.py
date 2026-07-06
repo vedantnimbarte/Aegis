@@ -8,9 +8,11 @@ from app.models.enums import (
     ScanFrequency,
     ScanMode,
     ScanStatus,
+    ScanTrigger,
     Severity,
     SubscriptionTier,
 )
+from app.models.installation import Installation
 from app.models.repository import Repository
 from app.models.scan import Scan
 from app.models.schedule import Schedule
@@ -23,10 +25,12 @@ __all__ = [
     "Repository",
     "Scan",
     "Schedule",
+    "Installation",
     "Vulnerability",
     "SubscriptionTier",
     "ScanStatus",
     "ScanMode",
     "ScanFrequency",
+    "ScanTrigger",
     "Severity",
 ]
