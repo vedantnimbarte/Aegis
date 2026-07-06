@@ -224,6 +224,10 @@ All endpoints are versioned under `/api/v1`.
 | `/schedules`          | POST   | Yes  | Create a recurring schedule for a repository         |
 | `/schedules/{id}`     | PATCH  | Yes  | Update a schedule (cadence, depth, enabled)          |
 | `/schedules/{id}`     | DELETE | Yes  | Delete a recurring schedule                          |
+| `/github/app`         | GET    | Yes  | GitHub App config + the user's linked installations  |
+| `/github/installations` | POST | Yes  | Link an App installation to the account (post-install) |
+| `/github/installations/{id}` | DELETE | Yes | Unlink an App installation                     |
+| `/github/webhook`     | POST   | No   | GitHub App webhook (signature-verified) — PR scans   |
 | `/billing/summary`    | GET    | Yes  | Current plan, usage vs. limits, and plan catalog     |
 | `/billing/checkout`   | POST   | Yes  | Start a Stripe Checkout session for a self-serve tier |
 | `/billing/portal`     | POST   | Yes  | Open the Stripe billing portal to manage a plan      |
@@ -256,6 +260,29 @@ Explore and try endpoints interactively at `/docs` (Swagger UI) or `/redoc`.
 6. **Store** — findings are mapped into `vulnerabilities`, the scan is marked
    `completed`, and the working dir is removed. Any failure marks the scan
    `failed` with the error message.
+
+## CI/CD GitHub App
+
+A dedicated GitHub App (separate from the login OAuth app) brings Aegis into the
+pull-request workflow:
+
+1. A user installs the App on their repos/org; GitHub redirects to the
+   dashboard's Settings page with an `installation_id` the signed-in user
+   **claims** (stored in `installations`, mapping installs → account).
+2. On a `pull_request` (opened/synchronize/reopened) webhook — HMAC-SHA256
+   signature-verified — Aegis maps the installation to the account, auto-connects
+   the repo, and dispatches a **quick** scan of the PR head commit (gated the
+   same as manual scans: verified email + active subscription within quota).
+3. The worker clones the PR commit with a short-lived **installation token**
+   (RS256 App JWT → installation access token), opens an in-progress **check
+   run**, and on completion posts/updates a findings **comment** and completes
+   the check run — `failure` if any Critical/High finding is present
+   (`GITHUB_CHECK_FAIL_SEVERITIES`), so it can gate merges via branch protection.
+
+Configure `GITHUB_APP_ID`, `GITHUB_APP_SLUG`, `GITHUB_APP_PRIVATE_KEY` (PEM or
+base64), and `GITHUB_APP_WEBHOOK_SECRET`; point the App's webhook at
+`/api/v1/github/webhook` and its post-install setup URL at the dashboard's
+`/settings`.
 
 ## Scheduled Scans
 
@@ -310,7 +337,7 @@ localhost:8000/api/v1/billing/webhook`).
 - [x] Web dashboard (Next.js): scan history, detailed reports, PDF export
 - [x] Strix orchestration and report ingestion (worker)
 - [x] Stripe subscription gating and billing webhooks
-- [ ] CI/CD GitHub App — scan on pull requests and comment findings
+- [x] CI/CD GitHub App — scan on pull requests and comment findings
 - [ ] Authenticated (grey-box) testing behind login walls
 - [ ] Auto-fix — open PRs with AI-suggested patches
 - [x] Scheduled recurring scans for continuous attack-surface monitoring

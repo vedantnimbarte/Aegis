@@ -65,8 +65,10 @@ dashboard/
 │   ├── auth/callback/        # OAuth code exchange
 │   └── (app)/                # authenticated route group (guard + shell)
 │       ├── page.tsx          # Overview: metrics + recent scans
-│       ├── repos/            # connect repos, launch scans
-│       └── scans/            # history list + [id] detailed report
+│       ├── repos/            # connect repos, launch scans, schedule
+│       ├── scans/            # history list + [id] detailed report
+│       ├── billing/          # plan, usage, Stripe checkout/portal
+│       └── settings/         # GitHub App (CI/CD) integration
 ├── components/               # AppShell, AuthGuard, NewScanDialog, ui primitives
 └── lib/                      # api client, tokens, auth context, formatters, types
 ```
@@ -85,6 +87,13 @@ Each connected repo on the Repositories page can have a recurring schedule
 (daily / weekly / monthly, at a chosen depth). The dialog creates, edits,
 pauses, or deletes it; the backend's Celery Beat dispatches due scans.
 
+## GitHub App (CI/CD)
+
+The Settings page manages the Aegis GitHub App: install it on your repos/org,
+and Aegis scans every pull request and posts a findings comment + check run.
+After installing, GitHub redirects back to `/settings?installation_id=…`, which
+the page claims automatically.
+
 ## Roadmap (not yet built)
 
-- CI/CD GitHub App (scan on pull requests)
+- Authenticated (grey-box) testing behind login walls
