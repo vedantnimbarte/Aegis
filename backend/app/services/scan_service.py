@@ -11,7 +11,7 @@ from typing import Optional, Sequence
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models.enums import ScanMode, Severity
+from app.models.enums import ScanMode, ScanTrigger, Severity
 from app.models.repository import Repository
 from app.models.scan import Scan
 from app.models.user import User
@@ -37,6 +37,10 @@ def create_scan(
     repository_id: uuid.UUID,
     scan_mode: ScanMode,
     custom_instructions: Optional[str] = None,
+    trigger: ScanTrigger = ScanTrigger.MANUAL,
+    github_installation_id: Optional[str] = None,
+    github_pr_number: Optional[int] = None,
+    github_commit_sha: Optional[str] = None,
 ) -> Optional[Scan]:
     """Create a `pending` scan for a user-owned repo and enqueue the worker job.
 
@@ -51,6 +55,10 @@ def create_scan(
         repository_id=repo.id,
         scan_mode=scan_mode,
         custom_instructions=custom_instructions,
+        trigger=trigger,
+        github_installation_id=github_installation_id,
+        github_pr_number=github_pr_number,
+        github_commit_sha=github_commit_sha,
     )
     db.add(scan)
     db.commit()
