@@ -164,9 +164,9 @@ celery -A app.workers.celery_app.celery worker --loglevel=info
 
 ### Running the dashboard (frontend)
 
-Option A (Docker Compose) already runs the dashboard at http://localhost:3001.
-To run it **standalone** for local frontend development (hot reload, no rebuild)
-alongside the backend from Option B:
+Option A (Docker Compose) already runs the dashboard dev server with hot reload
+at http://localhost:3001. To run it **without Docker** (e.g. alongside the
+backend from Option B):
 
 ```bash
 cd dashboard
