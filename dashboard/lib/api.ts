@@ -155,6 +155,18 @@ async function requestBlob(path: string): Promise<Blob> {
 
 export const api = {
   // --- Auth ---
+  register: (email: string, password: string) =>
+    request<Token>("/auth/register", {
+      method: "POST",
+      body: { email, password },
+      auth: false,
+    }),
+  login: (email: string, password: string) =>
+    request<Token>("/auth/login", {
+      method: "POST",
+      body: { email, password },
+      auth: false,
+    }),
   githubAuth: (code: string, redirect_uri?: string, state?: string) =>
     request<Token>("/auth/github", {
       method: "POST",
