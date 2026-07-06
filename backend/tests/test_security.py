@@ -51,3 +51,37 @@ def test_tampered_token_is_rejected() -> None:
     token = security.create_access_token("user-123")
     with pytest.raises(JWTError):
         security.decode_token(token + "tampered")
+
+
+# --- Password reset tokens ------------------------------------------------
+def test_password_reset_token_carries_type_and_fingerprint() -> None:
+    hashed = security.get_password_hash("old-password")
+    token = security.create_password_reset_token("user-123", hashed)
+    claims = security.decode_token(token)
+    assert claims["sub"] == "user-123"
+    assert claims["type"] == security.PASSWORD_RESET_TOKEN_TYPE
+    assert claims["pwf"] == security.password_fingerprint(hashed)
+
+
+def test_reset_token_is_not_an_access_token() -> None:
+    token = security.create_password_reset_token("user-123", "hash")
+    assert security.decode_token(token)["type"] != security.ACCESS_TOKEN_TYPE
+
+
+def test_fingerprint_changes_when_password_changes() -> None:
+    """This binding is what makes a reset token single-use."""
+    old = security.get_password_hash("old-password")
+    new = security.get_password_hash("new-password")
+    token = security.create_password_reset_token("user-123", old)
+    issued_fp = security.decode_token(token)["pwf"]
+    # After the password changes, the fingerprint no longer matches -> the
+    # token can't be replayed.
+    assert issued_fp == security.password_fingerprint(old)
+    assert issued_fp != security.password_fingerprint(new)
+
+
+def test_fingerprint_handles_user_without_password() -> None:
+    # GitHub-only users have no password hash; fingerprint must still work.
+    assert security.password_fingerprint(None) == security.password_fingerprint("")
+    token = security.create_password_reset_token("user-123", None)
+    assert security.decode_token(token)["pwf"] == security.password_fingerprint(None)
