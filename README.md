@@ -17,6 +17,7 @@ Aegis is a SaaS platform powered by the open-source [Strix](https://github.com/u
 - [Getting Started](#getting-started)
   - [Option A: Docker Compose (recommended)](#option-a-docker-compose-recommended)
   - [Option B: Local Python environment](#option-b-local-python-environment)
+  - [Running the dashboard (frontend)](#running-the-dashboard-frontend)
 - [Configuration](#configuration)
 - [Database Migrations](#database-migrations)
 - [API Reference](#api-reference)
@@ -159,6 +160,23 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 # In a separate terminal, run the worker:
 celery -A app.workers.celery_app.celery worker --loglevel=info
 ```
+
+### Running the dashboard (frontend)
+
+The backend options above start only the API and workers. The Next.js dashboard
+is a separate app in [`dashboard/`](dashboard) — run it alongside the backend:
+
+```bash
+cd dashboard
+npm install
+cp .env.example .env.local        # set NEXT_PUBLIC_API_BASE_URL etc.
+npm run dev                       # http://localhost:3001
+```
+
+Point `NEXT_PUBLIC_API_BASE_URL` at the API (default
+`http://localhost:8000/api/v1`) and make sure the API's `BACKEND_CORS_ORIGINS`
+allows `http://localhost:3001`. See [dashboard/README.md](dashboard/README.md)
+for the full environment and auth details.
 
 ## Configuration
 
