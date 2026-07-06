@@ -179,6 +179,14 @@ export const api = {
       body: { token, new_password },
       auth: false,
     }),
+  verifyEmail: (token: string) =>
+    request<{ detail: string }>("/auth/verify-email", {
+      method: "POST",
+      body: { token },
+      auth: false,
+    }),
+  resendVerification: () =>
+    request<{ detail: string }>("/auth/resend-verification", { method: "POST" }),
   githubAuth: (code: string, redirect_uri?: string, state?: string) =>
     request<Token>("/auth/github", {
       method: "POST",

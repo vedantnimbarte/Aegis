@@ -58,7 +58,9 @@ export function NewScanDialog({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  const isGateError =
+  // Only a billing gate (402) offers the "upgrade" link; an email-verification
+  // 403 just shows its message (the dashboard banner handles resending).
+  const isBillingGate =
     mutation.error instanceof ApiError && mutation.error.status === 402;
   const errorMessage =
     mutation.error instanceof ApiError
@@ -159,7 +161,7 @@ export function NewScanDialog({
           {errorMessage ? (
             <div className="space-y-2.5">
               <ErrorState message={errorMessage} />
-              {isGateError ? (
+              {isBillingGate ? (
                 <Link
                   href="/billing"
                   onClick={onClose}

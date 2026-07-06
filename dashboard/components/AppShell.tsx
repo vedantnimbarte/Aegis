@@ -10,6 +10,7 @@ import type { ReactNode } from "react";
 
 import { useAuth } from "@/lib/auth";
 import { cn } from "./ui";
+import { VerifyEmailBanner } from "./VerifyEmailBanner";
 
 const NAV = [
   { href: "/", label: "Overview", icon: LayoutDashboard, exact: true },
@@ -117,7 +118,10 @@ export function AppShell({ children }: { children: ReactNode }) {
 
       {/* Main content */}
       <main className="flex-1 px-5 pb-16 pt-20 sm:px-8 lg:ml-60 lg:pt-10">
-        <div className="mx-auto max-w-5xl">{children}</div>
+        <div className="mx-auto max-w-5xl">
+          <VerifyEmailBanner />
+          {children}
+        </div>
       </main>
     </div>
   );

@@ -21,6 +21,7 @@ export interface Token {
 export interface User {
   id: string;
   email: string;
+  email_verified: boolean;
   github_username: string | null;
   subscription_tier: SubscriptionTier;
   subscription_status: SubscriptionStatus;
