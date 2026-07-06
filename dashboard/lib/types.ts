@@ -1,6 +1,13 @@
 // TypeScript mirrors of the backend Pydantic schemas (see backend/app/schemas).
 
 export type SubscriptionTier = "free" | "starter" | "pro" | "enterprise";
+export type SubscriptionStatus =
+  | "none"
+  | "trialing"
+  | "active"
+  | "past_due"
+  | "canceled"
+  | "incomplete";
 export type ScanStatus = "pending" | "running" | "completed" | "failed";
 export type ScanMode = "quick" | "standard" | "deep";
 export type Severity = "critical" | "high" | "medium" | "low" | "info";
@@ -16,9 +23,31 @@ export interface User {
   email: string;
   github_username: string | null;
   subscription_tier: SubscriptionTier;
+  subscription_status: SubscriptionStatus;
+  has_active_subscription: boolean;
+  subscription_current_period_end: string | null;
   stripe_customer_id: string | null;
   is_active: boolean;
   created_at: string;
+}
+
+export interface Plan {
+  tier: SubscriptionTier;
+  name: string;
+  max_repos: number | null;
+  monthly_scans: number | null;
+  self_serve: boolean;
+  price_configured: boolean;
+}
+
+export interface BillingSummary {
+  tier: SubscriptionTier;
+  status: SubscriptionStatus;
+  has_active_subscription: boolean;
+  current_period_end: string | null;
+  usage: { scans_this_month: number; connected_repos: number };
+  limits: Plan;
+  plans: Plan[];
 }
 
 export interface Repository {

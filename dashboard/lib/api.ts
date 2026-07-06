@@ -9,11 +9,13 @@ import {
   setTokens,
 } from "./tokens";
 import type {
+  BillingSummary,
   GitHubRepo,
   Repository,
   Scan,
   ScanMode,
   ScanReport,
+  SubscriptionTier,
   Token,
   User,
 } from "./types";
@@ -23,9 +25,12 @@ const BASE_URL =
 
 export class ApiError extends Error {
   status: number;
-  constructor(status: number, message: string) {
+  /** Machine-readable code for gated actions, e.g. "no_subscription". */
+  reason?: string;
+  constructor(status: number, message: string, reason?: string) {
     super(message);
     this.status = status;
+    this.reason = reason;
     this.name = "ApiError";
   }
 }
@@ -93,11 +98,18 @@ async function rawRequest<T>(path: string, opts: RequestOptions): Promise<T> {
   const payload = isJson ? await res.json().catch(() => null) : await res.text();
 
   if (!res.ok) {
-    const detail =
-      (isJson && payload && (payload.detail as string)) ||
-      (typeof payload === "string" && payload) ||
-      `Request failed (HTTP ${res.status})`;
-    throw new ApiError(res.status, Array.isArray(detail) ? "Invalid request" : detail);
+    // FastAPI's `detail` may be a string, or an object like
+    // `{message, reason}` for gated (402) responses.
+    let message = `Request failed (HTTP ${res.status})`;
+    let reason: string | undefined;
+    const detail = isJson && payload ? (payload as any).detail : payload;
+    if (typeof detail === "string") {
+      message = detail;
+    } else if (detail && typeof detail === "object" && !Array.isArray(detail)) {
+      if (typeof detail.message === "string") message = detail.message;
+      if (typeof detail.reason === "string") reason = detail.reason;
+    }
+    throw new ApiError(res.status, message, reason);
   }
 
   return payload as T;
@@ -148,4 +160,14 @@ export const api = {
   }) => request<Scan>("/scans", { method: "POST", body }),
   getScan: (id: string) => request<Scan>(`/scans/${id}`),
   getReport: (id: string) => request<ScanReport>(`/scans/${id}/report`),
+
+  // --- Billing ---
+  billingSummary: () => request<BillingSummary>("/billing/summary"),
+  checkout: (tier: SubscriptionTier) =>
+    request<{ checkout_url: string }>("/billing/checkout", {
+      method: "POST",
+      body: { tier },
+    }),
+  billingPortal: () =>
+    request<{ portal_url: string }>("/billing/portal", { method: "POST" }),
 };
