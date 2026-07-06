@@ -10,7 +10,9 @@ import {
 } from "./tokens";
 import type {
   BillingSummary,
+  GitHubAppInfo,
   GitHubRepo,
+  Installation,
   Repository,
   Scan,
   ScanFrequency,
@@ -238,6 +240,16 @@ export const api = {
   ) => request<Schedule>(`/schedules/${id}`, { method: "PATCH", body }),
   deleteSchedule: (id: string) =>
     request<void>(`/schedules/${id}`, { method: "DELETE" }),
+
+  // --- GitHub App ---
+  getGitHubApp: () => request<GitHubAppInfo>("/github/app"),
+  claimInstallation: (installation_id: string) =>
+    request<Installation>("/github/installations", {
+      method: "POST",
+      body: { installation_id },
+    }),
+  deleteInstallation: (id: string) =>
+    request<void>(`/github/installations/${id}`, { method: "DELETE" }),
 
   // --- Billing ---
   billingSummary: () => request<BillingSummary>("/billing/summary"),

@@ -11,6 +11,7 @@ export type SubscriptionStatus =
 export type ScanStatus = "pending" | "running" | "completed" | "failed";
 export type ScanMode = "quick" | "standard" | "deep";
 export type ScanFrequency = "daily" | "weekly" | "monthly";
+export type ScanTrigger = "manual" | "scheduled" | "pull_request";
 export type Severity = "critical" | "high" | "medium" | "low" | "info";
 
 export interface Token {
@@ -73,6 +74,8 @@ export interface Scan {
   repository_id: string;
   status: ScanStatus;
   scan_mode: ScanMode;
+  trigger: ScanTrigger;
+  github_pr_number: number | null;
   custom_instructions: string | null;
   error_message: string | null;
   started_at: string | null;
@@ -109,4 +112,17 @@ export interface Schedule {
   next_run_at: string;
   last_run_at: string | null;
   created_at: string;
+}
+
+export interface Installation {
+  id: string;
+  installation_id: string;
+  account_login: string;
+  created_at: string;
+}
+
+export interface GitHubAppInfo {
+  configured: boolean;
+  install_url: string;
+  installations: Installation[];
 }

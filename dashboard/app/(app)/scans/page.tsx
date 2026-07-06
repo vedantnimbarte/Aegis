@@ -73,7 +73,14 @@ export default function ScansPage() {
                     <p className="truncate font-mono text-[13px] text-fg">
                       {repoName.get(scan.repository_id) ?? "Unknown repo"}
                     </p>
-                    <p className="text-[11px] text-faint">{relativeTime(scan.created_at)}</p>
+                    <p className="text-[11px] text-faint">
+                      {scan.trigger === "pull_request" && scan.github_pr_number
+                        ? `PR #${scan.github_pr_number} · `
+                        : scan.trigger === "scheduled"
+                          ? "Scheduled · "
+                          : ""}
+                      {relativeTime(scan.created_at)}
+                    </p>
                   </div>
                   <span className="hidden w-20 font-mono text-[12px] capitalize text-muted sm:block">
                     {scan.scan_mode}
