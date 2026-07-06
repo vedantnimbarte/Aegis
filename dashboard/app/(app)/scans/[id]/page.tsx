@@ -1,9 +1,10 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import {
   ArrowLeft,
   ChevronDown,
+  Download,
   Radar,
   ShieldCheck,
   FileWarning,
@@ -15,6 +16,7 @@ import { useParams } from "next/navigation";
 import { useMemo } from "react";
 
 import {
+  Button,
   Card,
   ErrorState,
   SeverityBadge,
@@ -58,6 +60,20 @@ export default function ScanDetailPage() {
     return r?.name;
   }, [reposQuery.data, scan?.repository_id]);
 
+  const download = useMutation({
+    mutationFn: () => api.getReportPdf(id),
+    onSuccess: (blob) => {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `aegis-report-${id}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    },
+  });
+
   if (scanQuery.isLoading) return <Spinner label="Loading scan…" />;
   if (scanQuery.error || !scan) return <ErrorState message="Scan not found." />;
 
@@ -90,8 +106,26 @@ export default function ScanDetailPage() {
             </p>
           </div>
         </div>
-        <StatusBadge status={scan.status} />
+        <div className="flex items-center gap-3">
+          {scan.status === "completed" ? (
+            <Button
+              variant="secondary"
+              icon={Download}
+              loading={download.isPending}
+              onClick={() => download.mutate()}
+            >
+              Export PDF
+            </Button>
+          ) : null}
+          <StatusBadge status={scan.status} />
+        </div>
       </div>
+
+      {download.error ? (
+        <div className="mb-6">
+          <ErrorState message="Could not export the PDF. Please try again." />
+        </div>
+      ) : null}
 
       {scan.custom_instructions ? (
         <Card className="mb-6 px-4 py-3">

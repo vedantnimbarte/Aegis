@@ -130,6 +130,29 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
   }
 }
 
+async function rawBlob(path: string): Promise<Blob> {
+  const headers: Record<string, string> = {};
+  const token = getAccessToken();
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  const res = await fetch(`${BASE_URL}${path}`, { headers, cache: "no-store" });
+  if (!res.ok) throw new ApiError(res.status, `Download failed (HTTP ${res.status})`);
+  return res.blob();
+}
+
+/** Authenticated binary fetch (e.g. PDF), with a single refresh-retry on 401. */
+async function requestBlob(path: string): Promise<Blob> {
+  try {
+    return await rawBlob(path);
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 401) {
+      const ok = await refreshAccessToken();
+      if (ok) return rawBlob(path);
+      throw new AuthExpiredError();
+    }
+    throw err;
+  }
+}
+
 export const api = {
   // --- Auth ---
   githubAuth: (code: string, redirect_uri?: string, state?: string) =>
@@ -160,6 +183,7 @@ export const api = {
   }) => request<Scan>("/scans", { method: "POST", body }),
   getScan: (id: string) => request<Scan>(`/scans/${id}`),
   getReport: (id: string) => request<ScanReport>(`/scans/${id}/report`),
+  getReportPdf: (id: string) => requestBlob(`/scans/${id}/report.pdf`),
 
   // --- Billing ---
   billingSummary: () => request<BillingSummary>("/billing/summary"),
