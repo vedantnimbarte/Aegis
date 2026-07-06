@@ -4,7 +4,7 @@
 
 Aegis is a SaaS platform powered by the open-source [Strix](https://github.com/usestrix/strix) AI engine. It provides automated, continuous penetration testing for web applications and APIs. Unlike traditional SAST tools that flood developers with false positives, Aegis uses Strix's autonomous AI agents to dynamically execute code, validate vulnerabilities, and deliver real Proof-of-Concept (PoC) exploits with actionable remediation.
 
-> **Status:** Early development. The backend API, data model, auth, and worker scaffolding are in place. The frontend and full Strix orchestration are the next phases.
+> **Status:** Early development. The backend API, data model, auth, and the Strix scan worker (repo checkout → headless Strix run → report ingestion) are in place. The frontend and billing are the next phases.
 
 ---
 
@@ -225,13 +225,21 @@ Explore and try endpoints interactively at `/docs` (Swagger UI) or `/redoc`.
 ## Scan Lifecycle
 
 1. **Trigger** — `POST /scans` creates a `Scans` record with status `pending`.
-2. **Queue** — the API pushes `{scan_id, repo_url, mode}` to Redis.
-3. **Execute** — a Celery worker marks the scan `running` and launches a fresh Strix Docker container:
+2. **Queue** — the API enqueues `run_strix_scan(scan_id)` to Redis.
+3. **Checkout** — a Celery worker marks the scan `running` and shallow-clones the
+   target repo into a per-scan working dir (private repos use the user's GitHub
+   token, which is scrubbed from all logs).
+4. **Execute** — the worker runs the Strix CLI headless against the checkout:
    ```bash
-   docker run --rm -v /tmp/repo:/app -e STRIX_LLM="..." usestrix/strix -n --target /app
+   strix -n --target <repo> --scan-mode <quick|standard|deep> [--instruction "..."]
    ```
-4. **Ingest** — the worker parses Strix's `report.json` output.
-5. **Store** — findings are mapped into `vulnerabilities`, the scan is marked `completed`, and the temporary volume/container is cleaned up.
+   Strix itself launches an isolated Docker sandbox container via the mounted
+   Docker socket (it is a Python CLI from the `strix-agent` package, not a
+   single run-image). Exit codes `0` (clean) and `2` (findings) are both success.
+5. **Ingest** — the worker parses `strix_runs/<run>/vulnerabilities.json`.
+6. **Store** — findings are mapped into `vulnerabilities`, the scan is marked
+   `completed`, and the working dir is removed. Any failure marks the scan
+   `failed` with the error message.
 
 ## Security Model
 
@@ -243,7 +251,7 @@ Explore and try endpoints interactively at `/docs` (Swagger UI) or `/redoc`.
 ## Roadmap
 
 - [ ] Web dashboard (Next.js): scan history, detailed reports, PDF export
-- [ ] Complete Strix orchestration and report ingestion
+- [x] Strix orchestration and report ingestion (worker)
 - [ ] Stripe subscription gating and billing webhooks
 - [ ] CI/CD GitHub App — scan on pull requests and comment findings
 - [ ] Authenticated (grey-box) testing behind login walls
