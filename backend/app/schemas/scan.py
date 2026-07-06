@@ -6,7 +6,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict
 
-from app.models.enums import ScanMode, ScanStatus, Severity
+from app.models.enums import ScanMode, ScanStatus, ScanTrigger, Severity
 
 
 class ScanCreate(BaseModel):
@@ -24,6 +24,8 @@ class ScanRead(BaseModel):
     repository_id: uuid.UUID
     status: ScanStatus
     scan_mode: ScanMode
+    trigger: ScanTrigger
+    github_pr_number: int | None = None
     custom_instructions: str | None = None
     error_message: str | None = None
     started_at: datetime | None = None
