@@ -16,6 +16,7 @@ class RepositoryRead(BaseModel):
     github_repo_id: str
     name: str
     url: str
+    has_greybox: bool = False
     created_at: datetime
 
 
