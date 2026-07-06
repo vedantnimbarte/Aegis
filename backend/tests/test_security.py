@@ -85,3 +85,17 @@ def test_fingerprint_handles_user_without_password() -> None:
     assert security.password_fingerprint(None) == security.password_fingerprint("")
     token = security.create_password_reset_token("user-123", None)
     assert security.decode_token(token)["pwf"] == security.password_fingerprint(None)
+
+
+# --- Email verification tokens --------------------------------------------
+def test_email_verification_token_carries_type() -> None:
+    token = security.create_email_verification_token("user-123")
+    claims = security.decode_token(token)
+    assert claims["sub"] == "user-123"
+    assert claims["type"] == security.EMAIL_VERIFY_TOKEN_TYPE
+
+
+def test_verification_token_is_not_a_reset_or_access_token() -> None:
+    claims = security.decode_token(security.create_email_verification_token("u"))
+    assert claims["type"] != security.ACCESS_TOKEN_TYPE
+    assert claims["type"] != security.PASSWORD_RESET_TOKEN_TYPE
