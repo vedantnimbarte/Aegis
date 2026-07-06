@@ -42,6 +42,14 @@ class ScanMode(str, enum.Enum):
     DEEP = "deep"
 
 
+class ScanFrequency(str, enum.Enum):
+    """Cadence for a recurring scan schedule."""
+
+    DAILY = "daily"
+    WEEKLY = "weekly"
+    MONTHLY = "monthly"
+
+
 class Severity(str, enum.Enum):
     CRITICAL = "critical"
     HIGH = "high"
