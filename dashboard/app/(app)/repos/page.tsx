@@ -9,12 +9,14 @@ import {
   Check,
   ExternalLink,
   CalendarClock,
+  KeyRound,
 } from "lucide-react";
 import Link from "next/link";
 import { useMemo, useState } from "react";
 
 import { NewScanDialog } from "@/components/NewScanDialog";
 import { ScheduleDialog } from "@/components/ScheduleDialog";
+import { GreyboxDialog } from "@/components/GreyboxDialog";
 import {
   Button,
   Card,
@@ -34,6 +36,7 @@ export default function ReposPage() {
     repo: Repository;
     existing: Schedule | null;
   } | null>(null);
+  const [greyboxRepo, setGreyboxRepo] = useState<Repository | null>(null);
 
   const connectedQuery = useQuery({ queryKey: ["repos"], queryFn: api.listRepos });
   const availableQuery = useQuery({
@@ -91,6 +94,7 @@ export default function ReposPage() {
                     existing: scheduleByRepo.get(repo.id) ?? null,
                   })
                 }
+                onGreybox={() => setGreyboxRepo(repo)}
               />
             ))}
           </div>
@@ -164,6 +168,10 @@ export default function ReposPage() {
           onClose={() => setScheduleTarget(null)}
         />
       ) : null}
+
+      {greyboxRepo ? (
+        <GreyboxDialog repository={greyboxRepo} onClose={() => setGreyboxRepo(null)} />
+      ) : null}
     </>
   );
 }
@@ -173,11 +181,13 @@ function ConnectedCard({
   schedule,
   onScan,
   onSchedule,
+  onGreybox,
 }: {
   repo: Repository;
   schedule: Schedule | null;
   onScan: () => void;
   onSchedule: () => void;
+  onGreybox: () => void;
 }) {
   return (
     <Card className="flex flex-col gap-3 p-4">
@@ -213,17 +223,34 @@ function ConnectedCard({
         </div>
       ) : null}
 
+      {repo.has_greybox ? (
+        <div className="flex items-center gap-2 rounded-lg border border-line bg-ink px-3 py-2 text-[11px]">
+          <KeyRound className="h-3.5 w-3.5 shrink-0 text-cyan-soft" strokeWidth={2} />
+          <span className="text-muted">Authenticated testing configured</span>
+        </div>
+      ) : null}
+
+      <Button variant="secondary" icon={Radar} className="w-full" onClick={onScan}>
+        New scan
+      </Button>
       <div className="flex gap-2">
-        <Button variant="secondary" icon={Radar} className="flex-1" onClick={onScan}>
-          New scan
-        </Button>
         <Button
           variant="secondary"
           icon={CalendarClock}
+          className="flex-1"
           onClick={onSchedule}
           aria-label={schedule ? "Edit schedule" : "Set up recurring scans"}
         >
-          {schedule ? "Edit" : "Schedule"}
+          Schedule
+        </Button>
+        <Button
+          variant="secondary"
+          icon={KeyRound}
+          className="flex-1"
+          onClick={onGreybox}
+          aria-label={repo.has_greybox ? "Edit authenticated testing" : "Set up authenticated testing"}
+        >
+          Auth
         </Button>
       </div>
     </Card>

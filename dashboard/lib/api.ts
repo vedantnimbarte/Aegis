@@ -12,6 +12,7 @@ import type {
   BillingSummary,
   GitHubAppInfo,
   GitHubRepo,
+  GreyboxConfig,
   Installation,
   Repository,
   Scan,
@@ -240,6 +241,22 @@ export const api = {
   ) => request<Schedule>(`/schedules/${id}`, { method: "PATCH", body }),
   deleteSchedule: (id: string) =>
     request<void>(`/schedules/${id}`, { method: "DELETE" }),
+
+  // --- Grey-box (authenticated testing) ---
+  getGreybox: (repoId: string) =>
+    request<GreyboxConfig>(`/repos/${repoId}/greybox`),
+  putGreybox: (
+    repoId: string,
+    body: {
+      target_url: string;
+      login_url?: string | null;
+      username?: string | null;
+      password?: string;
+      extra?: string;
+    }
+  ) => request<GreyboxConfig>(`/repos/${repoId}/greybox`, { method: "PUT", body }),
+  deleteGreybox: (repoId: string) =>
+    request<void>(`/repos/${repoId}/greybox`, { method: "DELETE" }),
 
   // --- GitHub App ---
   getGitHubApp: () => request<GitHubAppInfo>("/github/app"),

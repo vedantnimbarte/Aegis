@@ -58,6 +58,7 @@ export interface Repository {
   github_repo_id: string;
   name: string;
   url: string;
+  has_greybox: boolean;
   created_at: string;
 }
 
@@ -111,6 +112,17 @@ export interface Schedule {
   enabled: boolean;
   next_run_at: string;
   last_run_at: string | null;
+  created_at: string;
+}
+
+export interface GreyboxConfig {
+  id: string;
+  repository_id: string;
+  target_url: string;
+  login_url: string | null;
+  username: string | null;
+  has_password: boolean;
+  has_extra: boolean;
   created_at: string;
 }
 
