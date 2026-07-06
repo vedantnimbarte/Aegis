@@ -25,5 +25,8 @@ httpx==0.28.1          # GitHub / OAuth calls
 stripe==11.4.1
 docker==7.1.0          # Docker Engine API for Strix containers
 
+# --- Reporting ---
+fpdf2==2.7.9           # pure-Python PDF export of scan reports
+
 # --- Misc ---
 python-multipart==0.0.20
