@@ -24,6 +24,9 @@ _scan_budget = settings.GIT_CLONE_TIMEOUT_SECONDS + settings.STRIX_SCAN_TIMEOUT_
 _soft_time_limit = _scan_budget + 120
 _hard_time_limit = _soft_time_limit + 300
 
+# How often Celery Beat checks for due recurring scans (see workers/tasks.py).
+_SCHEDULER_TICK_SECONDS = 300.0
+
 celery.conf.update(
     task_track_started=True,
     task_serializer="json",
@@ -35,4 +38,11 @@ celery.conf.update(
     task_soft_time_limit=_soft_time_limit,
     task_time_limit=_hard_time_limit,
     worker_prefetch_multiplier=1,       # fair dispatch for long tasks
+    # Beat: poll the DB for due schedules and dispatch them.
+    beat_schedule={
+        "dispatch-due-scheduled-scans": {
+            "task": "app.workers.tasks.enqueue_due_scheduled_scans",
+            "schedule": _SCHEDULER_TICK_SECONDS,
+        },
+    },
 )

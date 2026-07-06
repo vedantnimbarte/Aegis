@@ -133,3 +133,56 @@ def _fail(db, scan_id: str, message: str) -> None:
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+@celery.task(name="app.workers.tasks.enqueue_due_scheduled_scans", bind=True)
+def enqueue_due_scheduled_scans(self) -> dict:
+    """Beat tick: dispatch a scan for every schedule that is due.
+
+    For each due schedule we advance ``next_run_at`` first (so a transient
+    error can't cause a tight re-dispatch loop), then enqueue a scan — but only
+    if the owner is still entitled (verified email + active subscription within
+    quota). Un-entitled schedules are skipped and retried next period.
+    """
+    # Imported lazily to avoid a circular import (scan_service imports this module).
+    from app.services import billing, scan_service, schedule_service
+
+    db = SessionLocal()
+    dispatched = 0
+    skipped = 0
+    try:
+        due = schedule_service.due_schedules(db)
+        for schedule in due:
+            schedule_service.advance_after_dispatch(db, schedule)
+
+            repo = schedule.repository
+            user = repo.user
+            if not user.email_verified:
+                skipped += 1
+                continue
+            try:
+                billing.assert_can_create_scan(db, user)
+            except billing.PaymentRequiredError:
+                skipped += 1
+                continue
+
+            scan_service.create_scan(
+                db,
+                user=user,
+                repository_id=repo.id,
+                scan_mode=schedule.scan_mode,
+                custom_instructions=schedule.custom_instructions,
+            )
+            dispatched += 1
+
+        if due:
+            logger.info(
+                "Scheduled scans: %d dispatched, %d skipped", dispatched, skipped
+            )
+        return {"dispatched": dispatched, "skipped": skipped}
+    except Exception:  # noqa: BLE001 - a beat tick must never crash the worker
+        logger.exception("enqueue_due_scheduled_scans failed")
+        db.rollback()
+        return {"dispatched": dispatched, "skipped": skipped, "error": True}
+    finally:
+        db.close()

@@ -51,5 +51,14 @@ services:
       # Strix runs sibling Docker containers, so mount the host Docker socket.
       - /var/run/docker.sock:/var/run/docker.sock
 
+  # Celery Beat — ticks periodically and dispatches due recurring scans.
+  beat:
+    build: ./backend
+    command: celery -A app.workers.celery_app.celery beat --loglevel=info
+    env_file: ./backend/.env
+    depends_on:
+      - redis
+      - db
+
 volumes:
   pgdata:
