@@ -1,0 +1,151 @@
+// Typed client for the Aegis backend. Attaches the JWT access token, and on a
+// 401 transparently refreshes once (via a shared in-flight promise so parallel
+// requests don't stampede the refresh endpoint) before retrying.
+
+import {
+  clearTokens,
+  getAccessToken,
+  getRefreshToken,
+  setTokens,
+} from "./tokens";
+import type {
+  GitHubRepo,
+  Repository,
+  Scan,
+  ScanMode,
+  ScanReport,
+  Token,
+  User,
+} from "./types";
+
+const BASE_URL =
+  process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000/api/v1";
+
+export class ApiError extends Error {
+  status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+    this.name = "ApiError";
+  }
+}
+
+/** Thrown when the session is unrecoverable and the user must sign in again. */
+export class AuthExpiredError extends ApiError {
+  constructor() {
+    super(401, "Your session has expired. Please sign in again.");
+    this.name = "AuthExpiredError";
+  }
+}
+
+interface RequestOptions {
+  method?: string;
+  body?: unknown;
+  auth?: boolean; // default true
+  retry?: boolean; // internal: whether a refresh-retry is still allowed
+}
+
+let refreshInFlight: Promise<boolean> | null = null;
+
+async function refreshAccessToken(): Promise<boolean> {
+  const refresh_token = getRefreshToken();
+  if (!refresh_token) return false;
+
+  if (!refreshInFlight) {
+    refreshInFlight = rawRequest<Token>("/auth/refresh", {
+      method: "POST",
+      body: { refresh_token },
+      auth: false,
+    })
+      .then((token) => {
+        setTokens(token);
+        return true;
+      })
+      .catch(() => {
+        clearTokens();
+        return false;
+      })
+      .finally(() => {
+        refreshInFlight = null;
+      });
+  }
+  return refreshInFlight;
+}
+
+async function rawRequest<T>(path: string, opts: RequestOptions): Promise<T> {
+  const headers: Record<string, string> = { Accept: "application/json" };
+  if (opts.body !== undefined) headers["Content-Type"] = "application/json";
+  if (opts.auth !== false) {
+    const token = getAccessToken();
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+  }
+
+  const res = await fetch(`${BASE_URL}${path}`, {
+    method: opts.method ?? "GET",
+    headers,
+    body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
+    cache: "no-store",
+  });
+
+  if (res.status === 204) return undefined as T;
+
+  const isJson = res.headers.get("content-type")?.includes("application/json");
+  const payload = isJson ? await res.json().catch(() => null) : await res.text();
+
+  if (!res.ok) {
+    const detail =
+      (isJson && payload && (payload.detail as string)) ||
+      (typeof payload === "string" && payload) ||
+      `Request failed (HTTP ${res.status})`;
+    throw new ApiError(res.status, Array.isArray(detail) ? "Invalid request" : detail);
+  }
+
+  return payload as T;
+}
+
+async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
+  try {
+    return await rawRequest<T>(path, opts);
+  } catch (err) {
+    const authed = opts.auth !== false;
+    const canRetry = opts.retry !== false;
+    if (err instanceof ApiError && err.status === 401 && authed && canRetry) {
+      const ok = await refreshAccessToken();
+      if (ok) return rawRequest<T>(path, { ...opts, retry: false });
+      throw new AuthExpiredError();
+    }
+    throw err;
+  }
+}
+
+export const api = {
+  // --- Auth ---
+  githubAuth: (code: string, redirect_uri?: string, state?: string) =>
+    request<Token>("/auth/github", {
+      method: "POST",
+      body: { code, redirect_uri, state },
+      auth: false,
+    }),
+
+  // --- User ---
+  me: () => request<User>("/users/me"),
+
+  // --- Repositories ---
+  listRepos: () => request<Repository[]>("/repos"),
+  listAvailableRepos: () => request<GitHubRepo[]>("/repos/available"),
+  syncRepo: (repo: { github_repo_id: string; name: string; url: string }) =>
+    request<Repository>("/repos", { method: "POST", body: repo }),
+
+  // --- Scans ---
+  listScans: (repositoryId?: string) =>
+    request<Scan[]>(
+      repositoryId ? `/scans?repository_id=${encodeURIComponent(repositoryId)}` : "/scans"
+    ),
+  createScan: (body: {
+    repository_id: string;
+    scan_mode: ScanMode;
+    custom_instructions?: string | null;
+  }) => request<Scan>("/scans", { method: "POST", body }),
+  getScan: (id: string) => request<Scan>(`/scans/${id}`),
+  getReport: (id: string) => request<ScanReport>(`/scans/${id}/report`),
+};
