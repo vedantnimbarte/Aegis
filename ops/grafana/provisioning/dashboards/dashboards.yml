@@ -1,0 +1,12 @@
+# Load JSON dashboards from disk on startup.
+apiVersion: 1
+
+providers:
+  - name: Aegis
+    orgId: 1
+    folder: ""
+    type: file
+    disableDeletion: false
+    editable: true
+    options:
+      path: /var/lib/grafana/dashboards

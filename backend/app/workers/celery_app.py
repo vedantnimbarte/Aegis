@@ -38,6 +38,10 @@ celery.conf.update(
     task_soft_time_limit=_soft_time_limit,
     task_time_limit=_hard_time_limit,
     worker_prefetch_multiplier=1,       # fair dispatch for long tasks
+    # Emit task-lifecycle events so the Prometheus celery-exporter can track
+    # scan throughput/failures (the worker must also run with `-E`).
+    worker_send_task_events=True,
+    task_send_sent_event=True,
     # Beat: poll the DB for due schedules and dispatch them.
     beat_schedule={
         "dispatch-due-scheduled-scans": {

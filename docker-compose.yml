@@ -41,7 +41,8 @@ services:
       # Install the Strix engine into the worker image only.
       args:
         INSTALL_STRIX: "true"
-    command: celery -A app.workers.celery_app.celery worker --loglevel=info
+    # `-E` emits task events for the Prometheus celery-exporter.
+    command: celery -A app.workers.celery_app.celery worker --loglevel=info -E
     env_file: ./backend/.env
     depends_on:
       - api
@@ -78,6 +79,45 @@ services:
     depends_on:
       - api
 
+  # --- Observability -----------------------------------------------------
+  # Scrapes Celery task events off the Redis broker and exports Prometheus
+  # metrics (scan throughput, failures, runtime).
+  celery-exporter:
+    image: danihodovic/celery-exporter:latest
+    environment:
+      CE_BROKER_URL: redis://redis:6379/0
+    depends_on:
+      - redis
+
+  prometheus:
+    image: prom/prometheus:latest
+    command: ["--config.file=/etc/prometheus/prometheus.yml"]
+    volumes:
+      - ./ops/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - promdata:/prometheus
+    ports:
+      - "9090:9090"
+    depends_on:
+      - api
+      - celery-exporter
+
+  grafana:
+    image: grafana/grafana:latest
+    environment:
+      # Dev-only default admin creds — change for any shared deployment.
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./ops/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./ops/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafanadata:/var/lib/grafana
+    ports:
+      - "3002:3000"
+    depends_on:
+      - prometheus
+
 volumes:
   pgdata:
   dashboard_node_modules:
+  promdata:
+  grafanadata:
