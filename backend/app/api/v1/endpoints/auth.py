@@ -1,19 +1,23 @@
 """Authentication endpoints (GitHub OAuth + JWT issuance/refresh)."""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from jose import JWTError
 from sqlalchemy.orm import Session
 
 from app.core import security
+from app.core.config import settings
 from app.db.session import get_db
 from app.schemas.auth import (
+    ForgotPasswordRequest,
     GitHubAuthRequest,
     LoginRequest,
     RefreshRequest,
     RegisterRequest,
+    ResetPasswordRequest,
 )
 from app.schemas.token import Token
+from app.services import email as email_service
 from app.services import github as github_service
 from app.services import user_service
 
@@ -84,6 +88,60 @@ def github_oauth(payload: GitHubAuthRequest, db: Session = Depends(get_db)) -> T
         github_token=gh_token,
     )
 
+    return _issue_tokens(user.id)
+
+
+@router.post("/forgot-password", status_code=status.HTTP_202_ACCEPTED)
+def forgot_password(
+    payload: ForgotPasswordRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Email a password-reset link. Always returns the same response so it
+    cannot be used to probe which emails have accounts (anti-enumeration).
+    """
+    user = user_service.get_user_by_email(db, payload.email.strip().lower())
+    if user is not None and user.is_active:
+        token = security.create_password_reset_token(user.id, user.hashed_password)
+        reset_url = f"{settings.DASHBOARD_URL}/reset-password?token={token}"
+        # Send off the request thread so SMTP latency never blocks the response.
+        background_tasks.add_task(
+            email_service.send_password_reset_email, user.email, reset_url
+        )
+    return {
+        "detail": "If an account exists for that email, a password reset link "
+        "has been sent."
+    }
+
+
+@router.post("/reset-password", response_model=Token)
+def reset_password(
+    payload: ResetPasswordRequest, db: Session = Depends(get_db)
+) -> Token:
+    """Set a new password using a valid reset token, then sign the user in."""
+    invalid = HTTPException(
+        status.HTTP_400_BAD_REQUEST,
+        detail="This password reset link is invalid or has expired.",
+    )
+    try:
+        claims = security.decode_token(payload.token)
+    except JWTError:
+        raise invalid
+
+    if claims.get("type") != security.PASSWORD_RESET_TOKEN_TYPE:
+        raise invalid
+
+    subject = claims.get("sub")
+    user = user_service.get_user_by_id(db, subject) if subject else None
+    if user is None or not user.is_active:
+        raise invalid
+
+    # The token is bound to the password at issue time; a mismatch means it was
+    # already used or the password has since changed.
+    if claims.get("pwf") != security.password_fingerprint(user.hashed_password):
+        raise invalid
+
+    user_service.set_password(db, user, payload.new_password)
     return _issue_tokens(user.id)
 
 
