@@ -118,5 +118,6 @@ def build_report(
         scan=ScanRead.model_validate(scan),
         total=len(vulns),
         counts_by_severity=counts,
+        fixable_count=sum(1 for v in vulns if v.suggested_fix),
         vulnerabilities=[VulnerabilityRead.model_validate(v) for v in vulns],
     )

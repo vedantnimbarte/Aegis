@@ -26,6 +26,7 @@ class ScanRead(BaseModel):
     scan_mode: ScanMode
     trigger: ScanTrigger
     github_pr_number: int | None = None
+    autofix_pr_url: str | None = None
     custom_instructions: str | None = None
     error_message: str | None = None
     started_at: datetime | None = None
@@ -45,6 +46,7 @@ class VulnerabilityRead(BaseModel):
     owasp_category: str | None = None
     cvss_score: float | None = None
     file_path: str | None = None
+    has_fix: bool = False
 
 
 class ScanReport(BaseModel):
@@ -53,4 +55,9 @@ class ScanReport(BaseModel):
     scan: ScanRead
     total: int
     counts_by_severity: dict[str, int]
+    fixable_count: int = 0
     vulnerabilities: list[VulnerabilityRead]
+
+
+class AutofixResponse(BaseModel):
+    pull_request_url: str

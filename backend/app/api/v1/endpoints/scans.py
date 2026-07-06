@@ -9,8 +9,8 @@ from sqlalchemy.orm import Session
 from app.api import deps
 from app.db.session import get_db
 from app.models.user import User
-from app.schemas.scan import ScanCreate, ScanRead, ScanReport
-from app.services import billing, report_pdf, scan_service
+from app.schemas.scan import AutofixResponse, ScanCreate, ScanRead, ScanReport
+from app.services import autofix, billing, report_pdf, scan_service
 
 router = APIRouter(prefix="/scans", tags=["scans"])
 
@@ -101,4 +101,49 @@ def export_scan_report_pdf(
         content=pdf_bytes,
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.post("/{scan_id}/autofix", response_model=AutofixResponse)
+def generate_autofix_pr(
+    scan_id: uuid.UUID,
+    current_user: User = Depends(deps.get_current_active_user),
+    db: Session = Depends(get_db),
+) -> AutofixResponse:
+    """Open a GitHub PR applying Strix's suggested fixes for the scan."""
+    deps.ensure_email_verified(current_user)
+    if not current_user.has_active_subscription:
+        raise HTTPException(
+            status.HTTP_402_PAYMENT_REQUIRED,
+            detail={
+                "message": "An active subscription is required for auto-fix.",
+                "reason": "no_subscription",
+            },
+        )
+
+    scan = scan_service.get_scan(db, scan_id, current_user)
+    if scan is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Scan not found")
+
+    pr_url, error = autofix.generate_fix_pr(db, scan, current_user)
+    if pr_url:
+        return AutofixResponse(pull_request_url=pr_url)
+
+    if error == "no_fixes":
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail="No auto-fixable findings for this scan.",
+        )
+    if error == "no_installation":
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail={
+                "message": "Install the Aegis GitHub App on this repository's "
+                "owner to enable auto-fix.",
+                "reason": "no_installation",
+            },
+        )
+    raise HTTPException(
+        status.HTTP_502_BAD_GATEWAY,
+        detail="Could not open the pull request. Check the GitHub App installation.",
     )
