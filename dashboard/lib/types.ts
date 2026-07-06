@@ -10,6 +10,7 @@ export type SubscriptionStatus =
   | "incomplete";
 export type ScanStatus = "pending" | "running" | "completed" | "failed";
 export type ScanMode = "quick" | "standard" | "deep";
+export type ScanFrequency = "daily" | "weekly" | "monthly";
 export type Severity = "critical" | "high" | "medium" | "low" | "info";
 
 export interface Token {
@@ -96,4 +97,16 @@ export interface ScanReport {
   total: number;
   counts_by_severity: Record<Severity, number>;
   vulnerabilities: Vulnerability[];
+}
+
+export interface Schedule {
+  id: string;
+  repository_id: string;
+  scan_mode: ScanMode;
+  frequency: ScanFrequency;
+  custom_instructions: string | null;
+  enabled: boolean;
+  next_run_at: string;
+  last_run_at: string | null;
+  created_at: string;
 }

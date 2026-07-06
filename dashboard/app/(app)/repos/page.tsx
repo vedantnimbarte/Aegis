@@ -1,11 +1,20 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { GitBranch, Lock, Plus, Radar, Check, ExternalLink } from "lucide-react";
+import {
+  GitBranch,
+  Lock,
+  Plus,
+  Radar,
+  Check,
+  ExternalLink,
+  CalendarClock,
+} from "lucide-react";
 import Link from "next/link";
 import { useMemo, useState } from "react";
 
 import { NewScanDialog } from "@/components/NewScanDialog";
+import { ScheduleDialog } from "@/components/ScheduleDialog";
 import {
   Button,
   Card,
@@ -15,12 +24,16 @@ import {
   Spinner,
 } from "@/components/ui";
 import { api, ApiError } from "@/lib/api";
-import { relativeTime } from "@/lib/format";
-import type { GitHubRepo, Repository } from "@/lib/types";
+import { formatDate, relativeTime } from "@/lib/format";
+import type { GitHubRepo, Repository, Schedule } from "@/lib/types";
 
 export default function ReposPage() {
   const queryClient = useQueryClient();
   const [scanRepoId, setScanRepoId] = useState<string | null>(null);
+  const [scheduleTarget, setScheduleTarget] = useState<{
+    repo: Repository;
+    existing: Schedule | null;
+  } | null>(null);
 
   const connectedQuery = useQuery({ queryKey: ["repos"], queryFn: api.listRepos });
   const availableQuery = useQuery({
@@ -28,11 +41,16 @@ export default function ReposPage() {
     queryFn: api.listAvailableRepos,
     retry: false,
   });
+  const schedulesQuery = useQuery({ queryKey: ["schedules"], queryFn: api.listSchedules });
 
   const connected = connectedQuery.data ?? [];
   const connectedKeys = useMemo(
     () => new Set(connected.map((r) => r.github_repo_id)),
     [connected]
+  );
+  const scheduleByRepo = useMemo(
+    () => new Map((schedulesQuery.data ?? []).map((s) => [s.repository_id, s])),
+    [schedulesQuery.data]
   );
 
   const connectMutation = useMutation({
@@ -62,7 +80,18 @@ export default function ReposPage() {
         ) : (
           <div className="grid gap-3 sm:grid-cols-2">
             {connected.map((repo) => (
-              <ConnectedCard key={repo.id} repo={repo} onScan={() => setScanRepoId(repo.id)} />
+              <ConnectedCard
+                key={repo.id}
+                repo={repo}
+                schedule={scheduleByRepo.get(repo.id) ?? null}
+                onScan={() => setScanRepoId(repo.id)}
+                onSchedule={() =>
+                  setScheduleTarget({
+                    repo,
+                    existing: scheduleByRepo.get(repo.id) ?? null,
+                  })
+                }
+              />
             ))}
           </div>
         )}
@@ -127,11 +156,29 @@ export default function ReposPage() {
           onClose={() => setScanRepoId(null)}
         />
       ) : null}
+
+      {scheduleTarget ? (
+        <ScheduleDialog
+          repository={scheduleTarget.repo}
+          existing={scheduleTarget.existing}
+          onClose={() => setScheduleTarget(null)}
+        />
+      ) : null}
     </>
   );
 }
 
-function ConnectedCard({ repo, onScan }: { repo: Repository; onScan: () => void }) {
+function ConnectedCard({
+  repo,
+  schedule,
+  onScan,
+  onSchedule,
+}: {
+  repo: Repository;
+  schedule: Schedule | null;
+  onScan: () => void;
+  onSchedule: () => void;
+}) {
   return (
     <Card className="flex flex-col gap-3 p-4">
       <div className="flex items-start gap-3">
@@ -151,9 +198,34 @@ function ConnectedCard({ repo, onScan }: { repo: Repository; onScan: () => void 
           <p className="mt-0.5 text-[11px] text-faint">Connected {relativeTime(repo.created_at)}</p>
         </div>
       </div>
-      <Button variant="secondary" icon={Radar} className="w-full" onClick={onScan}>
-        New scan
-      </Button>
+
+      {schedule ? (
+        <div className="flex items-center gap-2 rounded-lg border border-line bg-ink px-3 py-2 text-[11px]">
+          <CalendarClock className="h-3.5 w-3.5 shrink-0 text-cyan-soft" strokeWidth={2} />
+          {schedule.enabled ? (
+            <span className="text-muted">
+              <span className="capitalize text-fg">{schedule.frequency}</span> {schedule.scan_mode}{" "}
+              scan · next {formatDate(schedule.next_run_at)}
+            </span>
+          ) : (
+            <span className="text-faint">Schedule paused</span>
+          )}
+        </div>
+      ) : null}
+
+      <div className="flex gap-2">
+        <Button variant="secondary" icon={Radar} className="flex-1" onClick={onScan}>
+          New scan
+        </Button>
+        <Button
+          variant="secondary"
+          icon={CalendarClock}
+          onClick={onSchedule}
+          aria-label={schedule ? "Edit schedule" : "Set up recurring scans"}
+        >
+          {schedule ? "Edit" : "Schedule"}
+        </Button>
+      </div>
     </Card>
   );
 }

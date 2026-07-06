@@ -13,8 +13,10 @@ import type {
   GitHubRepo,
   Repository,
   Scan,
+  ScanFrequency,
   ScanMode,
   ScanReport,
+  Schedule,
   SubscriptionTier,
   Token,
   User,
@@ -216,6 +218,26 @@ export const api = {
   getScan: (id: string) => request<Scan>(`/scans/${id}`),
   getReport: (id: string) => request<ScanReport>(`/scans/${id}/report`),
   getReportPdf: (id: string) => requestBlob(`/scans/${id}/report.pdf`),
+
+  // --- Schedules ---
+  listSchedules: () => request<Schedule[]>("/schedules"),
+  createSchedule: (body: {
+    repository_id: string;
+    frequency: ScanFrequency;
+    scan_mode: ScanMode;
+    custom_instructions?: string | null;
+  }) => request<Schedule>("/schedules", { method: "POST", body }),
+  updateSchedule: (
+    id: string,
+    body: {
+      frequency?: ScanFrequency;
+      scan_mode?: ScanMode;
+      custom_instructions?: string | null;
+      enabled?: boolean;
+    }
+  ) => request<Schedule>(`/schedules/${id}`, { method: "PATCH", body }),
+  deleteSchedule: (id: string) =>
+    request<void>(`/schedules/${id}`, { method: "DELETE" }),
 
   // --- Billing ---
   billingSummary: () => request<BillingSummary>("/billing/summary"),
