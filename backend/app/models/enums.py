@@ -15,6 +15,20 @@ class SubscriptionTier(str, enum.Enum):
     ENTERPRISE = "enterprise"
 
 
+class SubscriptionStatus(str, enum.Enum):
+    """Mirrors the subset of Stripe subscription statuses we act on.
+
+    ``NONE`` is our own value for a user who has never subscribed.
+    """
+
+    NONE = "none"
+    TRIALING = "trialing"
+    ACTIVE = "active"
+    PAST_DUE = "past_due"
+    CANCELED = "canceled"
+    INCOMPLETE = "incomplete"
+
+
 class ScanStatus(str, enum.Enum):
     PENDING = "pending"
     RUNNING = "running"

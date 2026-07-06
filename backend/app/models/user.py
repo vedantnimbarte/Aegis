@@ -1,14 +1,15 @@
 """User model."""
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, List, Optional
 
-from sqlalchemy import String
+from sqlalchemy import DateTime, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.encryption import EncryptedString
 from app.db.base_class import Base, TimestampMixin, UUIDMixin, str_enum
-from app.models.enums import SubscriptionTier
+from app.models.enums import SubscriptionStatus, SubscriptionTier
 
 if TYPE_CHECKING:  # avoid circular imports at runtime
     from app.models.repository import Repository
@@ -35,8 +36,21 @@ class User(UUIDMixin, TimestampMixin, Base):
         server_default=SubscriptionTier.FREE.value,
         nullable=False,
     )
+    subscription_status: Mapped[SubscriptionStatus] = mapped_column(
+        str_enum(SubscriptionStatus, "subscription_status"),
+        default=SubscriptionStatus.NONE,
+        server_default=SubscriptionStatus.NONE.value,
+        nullable=False,
+    )
     stripe_customer_id: Mapped[Optional[str]] = mapped_column(
         String(255), unique=True, nullable=True
+    )
+    stripe_subscription_id: Mapped[Optional[str]] = mapped_column(
+        String(255), unique=True, nullable=True
+    )
+    # End of the current paid period; the gate treats the sub as lapsed past it.
+    subscription_current_period_end: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )
 
     is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
@@ -46,6 +60,26 @@ class User(UUIDMixin, TimestampMixin, Base):
         back_populates="user",
         cascade="all, delete-orphan",
     )
+
+    @property
+    def has_active_subscription(self) -> bool:
+        """True when the user may run scans.
+
+        Requires a live Stripe subscription (``active``/``trialing``) that has
+        not passed its billing period end. ``past_due`` still counts as active
+        so a failed renewal has a grace window before Stripe cancels it.
+        """
+        if self.subscription_status not in (
+            SubscriptionStatus.ACTIVE,
+            SubscriptionStatus.TRIALING,
+            SubscriptionStatus.PAST_DUE,
+        ):
+            return False
+        end = self.subscription_current_period_end
+        if end is None:
+            return True
+        # Compare timezone-aware; DB values are stored with tz.
+        return end > datetime.now(timezone.utc)
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"<User id={self.id} email={self.email!r}>"
