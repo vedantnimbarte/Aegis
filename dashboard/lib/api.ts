@@ -167,6 +167,18 @@ export const api = {
       body: { email, password },
       auth: false,
     }),
+  forgotPassword: (email: string) =>
+    request<{ detail: string }>("/auth/forgot-password", {
+      method: "POST",
+      body: { email },
+      auth: false,
+    }),
+  resetPassword: (token: string, new_password: string) =>
+    request<Token>("/auth/reset-password", {
+      method: "POST",
+      body: { token, new_password },
+      auth: false,
+    }),
   githubAuth: (code: string, redirect_uri?: string, state?: string) =>
     request<Token>("/auth/github", {
       method: "POST",

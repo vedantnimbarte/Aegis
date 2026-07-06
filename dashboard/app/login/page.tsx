@@ -1,7 +1,8 @@
 "use client";
 
 import { useMutation } from "@tanstack/react-query";
-import { Github, Loader2, Lock, Mail, ShieldHalf } from "lucide-react";
+import { Github, Lock, Mail, ShieldHalf } from "lucide-react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 
@@ -135,6 +136,17 @@ export default function LoginPage() {
               value={password}
               onChange={setPassword}
             />
+
+            {mode === "signin" ? (
+              <div className="flex justify-end">
+                <Link
+                  href="/forgot-password"
+                  className="text-[12px] font-medium text-muted hover:text-cyan-soft"
+                >
+                  Forgot password?
+                </Link>
+              </div>
+            ) : null}
 
             {errorMessage ? (
               <p className="rounded-lg border border-danger/30 bg-danger/[0.06] px-3 py-2.5 text-[12px] text-danger">
