@@ -209,9 +209,13 @@ All endpoints are versioned under `/api/v1`.
 | `/users/me`           | GET    | Yes  | Current user profile and subscription status         |
 | `/repos`              | GET    | Yes  | List authorized GitHub repositories                  |
 | `/repos`              | POST   | Yes  | Sync/add a repository to the user's dashboard        |
-| `/scans`              | POST   | Yes  | Trigger a new Strix scan for a repository            |
+| `/scans`              | POST   | Yes  | Trigger a new Strix scan (gated by subscription/quota) |
 | `/scans/{id}`         | GET    | Yes  | Status and metadata of a specific scan               |
 | `/scans/{id}/report`  | GET    | Yes  | Detailed vulnerabilities and PoCs for a scan         |
+| `/billing/summary`    | GET    | Yes  | Current plan, usage vs. limits, and plan catalog     |
+| `/billing/checkout`   | POST   | Yes  | Start a Stripe Checkout session for a self-serve tier |
+| `/billing/portal`     | POST   | Yes  | Open the Stripe billing portal to manage a plan      |
+| `/billing/webhook`    | POST   | No   | Stripe webhook (signature-verified) — syncs subscriptions |
 
 Explore and try endpoints interactively at `/docs` (Swagger UI) or `/redoc`.
 
@@ -248,11 +252,39 @@ Explore and try endpoints interactively at `/docs` (Swagger UI) or `/redoc`.
 - **Tenant isolation** — every endpoint validates that the `user_id` from the JWT owns the requested `repository_id` / `scan_id`.
 - **Container isolation** — Strix containers run in an isolated network with no access to host metadata or the backend database; egress is limited to the LLM API and necessary OSINT endpoints.
 
+## Billing & Subscription Gating
+
+Scanning is gated behind an active Stripe subscription, with per-tier limits
+(PRD §6). Tiers and their entitlements live in
+[`billing_plans.py`](backend/app/services/billing_plans.py):
+
+| Tier       | Repositories | Scans / month | Purchase           |
+| ---------- | ------------ | ------------- | ------------------ |
+| Free       | 0            | 0             | — (default)        |
+| Starter    | 3            | 20            | Self-serve Checkout |
+| Pro        | Unlimited    | Unlimited     | Self-serve Checkout |
+| Enterprise | Unlimited    | Unlimited     | Contact sales       |
+
+- **Gate** — `POST /scans` and new-repo `POST /repos` return **402** with
+  `{message, reason}` (`reason` ∈ `no_subscription` / `scan_quota` /
+  `repo_quota`) when the user isn't entitled. The dashboard turns these into an
+  "Upgrade" prompt.
+- **Checkout / portal** — `POST /billing/checkout` creates a Stripe Checkout
+  session for Starter/Pro; `POST /billing/portal` opens the customer portal.
+- **Webhooks** — `POST /billing/webhook` verifies the Stripe signature and
+  syncs `subscription_status`, `subscription_tier`, and the current period end
+  onto the user (`checkout.session.completed`, `customer.subscription.*`).
+
+Configure `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_STARTER`,
+`STRIPE_PRICE_PRO`, and `DASHBOARD_URL` (see `.env.example`). Point a Stripe
+webhook at `/api/v1/billing/webhook` (locally: `stripe listen --forward-to
+localhost:8000/api/v1/billing/webhook`).
+
 ## Roadmap
 
 - [ ] Web dashboard (Next.js): scan history, detailed reports, PDF export
 - [x] Strix orchestration and report ingestion (worker)
-- [ ] Stripe subscription gating and billing webhooks
+- [x] Stripe subscription gating and billing webhooks
 - [ ] CI/CD GitHub App — scan on pull requests and comment findings
 - [ ] Authenticated (grey-box) testing behind login walls
 - [ ] Auto-fix — open PRs with AI-suggested patches

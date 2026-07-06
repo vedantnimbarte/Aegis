@@ -58,8 +58,15 @@ dashboard/
 └── lib/                      # api client, tokens, auth context, formatters, types
 ```
 
+## Billing
+
+The `/billing` page shows the current plan, usage vs. limits, and a plan
+catalog. Subscribing opens Stripe Checkout; existing subscribers get the Stripe
+billing portal. Scanning and connecting repos are gated on an active
+subscription — unentitled actions return **402** and the UI shows an "Upgrade"
+prompt (see `NewScanAction` and the 402 handling in the repos / new-scan flows).
+
 ## Roadmap (not yet built)
 
 - PDF export of a scan report
 - Email/password auth (backend currently exposes GitHub OAuth only)
-- Stripe subscription gating before the first scan
