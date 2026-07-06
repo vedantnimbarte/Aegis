@@ -3,14 +3,14 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.orm import Session
 
 from app.api import deps
 from app.db.session import get_db
 from app.models.user import User
 from app.schemas.scan import ScanCreate, ScanRead, ScanReport
-from app.services import billing, scan_service
+from app.services import billing, report_pdf, scan_service
 
 router = APIRouter(prefix="/scans", tags=["scans"])
 
@@ -76,3 +76,28 @@ def get_scan_report(
     if report is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Scan not found")
     return report
+
+
+@router.get(
+    "/{scan_id}/report.pdf",
+    response_class=Response,
+    responses={200: {"content": {"application/pdf": {}}}},
+)
+def export_scan_report_pdf(
+    scan_id: uuid.UUID,
+    current_user: User = Depends(deps.get_current_active_user),
+    db: Session = Depends(get_db),
+) -> Response:
+    """Export the detailed report as a downloadable PDF (compliance/sharing)."""
+    scan = scan_service.get_scan(db, scan_id, current_user)
+    report = scan_service.build_report(db, scan_id, current_user)
+    if scan is None or report is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Scan not found")
+
+    pdf_bytes = report_pdf.build_report_pdf(report, scan.repository.name)
+    filename = f"aegis-report-{scan_id}.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
