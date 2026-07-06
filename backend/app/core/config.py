@@ -41,6 +41,19 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
+    # Password-reset links expire quickly; the token is also bound to the
+    # current password hash, so it becomes invalid the moment the password
+    # changes (single-use).
+    PASSWORD_RESET_TOKEN_EXPIRE_MINUTES: int = 30
+
+    # --- Email (SMTP) -----------------------------------------------------
+    # When SMTP_HOST is blank, emails are logged instead of sent (dev mode).
+    SMTP_HOST: str = ""
+    SMTP_PORT: int = 587
+    SMTP_USER: str = ""
+    SMTP_PASSWORD: str = ""
+    SMTP_STARTTLS: bool = True
+    EMAIL_FROM: str = "Aegis Security <no-reply@aegis.security>"
 
     # --- Encryption (AES-256-GCM for GitHub tokens at rest) --------------
     # Must be a URL-safe base64-encoded 32-byte key. Generate with:

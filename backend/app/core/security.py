@@ -7,8 +7,9 @@ as an access token (and vice-versa).
 """
 from __future__ import annotations
 
+import hashlib
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Optional
 
 import bcrypt
 from jose import jwt
@@ -18,6 +19,7 @@ from app.core.config import settings
 # Token type claim values.
 ACCESS_TOKEN_TYPE = "access"
 REFRESH_TOKEN_TYPE = "refresh"
+PASSWORD_RESET_TOKEN_TYPE = "password_reset"
 
 # bcrypt only considers the first 72 bytes of a password; longer inputs raise
 # in bcrypt >= 4.x. We truncate to that limit (standard bcrypt behaviour).
@@ -76,3 +78,28 @@ def decode_token(token: str) -> dict[str, Any]:
         settings.JWT_SECRET_KEY,
         algorithms=[settings.JWT_ALGORITHM],
     )
+
+
+# --- Password reset tokens ------------------------------------------------
+def password_fingerprint(hashed_password: Optional[str]) -> str:
+    """A short, non-reversible fingerprint of the user's current password.
+
+    Binding a reset token to this value makes the token single-use: once the
+    password changes, the fingerprint changes and the outstanding token(s)
+    stop verifying. Users with no password yet fingerprint the empty string.
+    """
+    material = f"{hashed_password or ''}{settings.JWT_SECRET_KEY}".encode("utf-8")
+    return hashlib.sha256(material).hexdigest()[:32]
+
+
+def create_password_reset_token(subject: str | Any, hashed_password: Optional[str]) -> str:
+    now = datetime.now(timezone.utc)
+    expire = now + timedelta(minutes=settings.PASSWORD_RESET_TOKEN_EXPIRE_MINUTES)
+    claims = {
+        "sub": str(subject),
+        "type": PASSWORD_RESET_TOKEN_TYPE,
+        "pwf": password_fingerprint(hashed_password),
+        "iat": int(now.timestamp()),
+        "exp": int(expire.timestamp()),
+    }
+    return jwt.encode(claims, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
