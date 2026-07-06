@@ -46,6 +46,10 @@ Either path returns an access + refresh token pair, persisted in
 `localStorage`. The API client attaches the access token and transparently
 refreshes once on a `401` before retrying.
 
+**Password reset** — `/forgot-password` requests a reset email; the emailed
+link opens `/reset-password?token=…`, which sets a new password and signs the
+user in.
+
 ## Structure
 
 ```
@@ -73,4 +77,4 @@ prompt (see `NewScanAction` and the 402 handling in the repos / new-scan flows).
 
 ## Roadmap (not yet built)
 
-- Password reset / email verification flows
+- Email verification on sign-up

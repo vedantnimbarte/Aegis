@@ -207,6 +207,8 @@ All endpoints are versioned under `/api/v1`.
 | `/health`             | GET    | No   | Service health / environment                         |
 | `/auth/register`      | POST   | No   | Create an account with email + password; issues a JWT |
 | `/auth/login`         | POST   | No   | Authenticate with email + password; issues a JWT     |
+| `/auth/forgot-password` | POST | No   | Email a password-reset link (always 202, anti-enumeration) |
+| `/auth/reset-password`  | POST | No   | Set a new password with a reset token; issues a JWT  |
 | `/auth/github`        | POST   | No   | Handles GitHub OAuth callback and issues a JWT       |
 | `/users/me`           | GET    | Yes  | Current user profile and subscription status         |
 | `/repos`              | GET    | Yes  | List authorized GitHub repositories                  |
@@ -250,7 +252,8 @@ Explore and try endpoints interactively at `/docs` (Swagger UI) or `/redoc`.
 
 ## Security Model
 
-- **Auth** — stateless JWTs with short-lived (15 min) access tokens plus a refresh-token mechanism.
+- **Auth** — stateless JWTs with short-lived (15 min) access tokens plus a refresh-token mechanism. Passwords are bcrypt-hashed.
+- **Password reset** — a short-lived reset JWT is bound to a fingerprint of the user's current password hash, so it self-invalidates the moment the password changes (single-use, no server-side token store). `forgot-password` always returns the same response to avoid account enumeration. Reset links are emailed via SMTP, or logged when SMTP is unconfigured (dev).
 - **Token encryption** — GitHub OAuth tokens are encrypted at rest with AES-256-GCM.
 - **Tenant isolation** — every endpoint validates that the `user_id` from the JWT owns the requested `repository_id` / `scan_id`.
 - **Container isolation** — Strix containers run in an isolated network with no access to host metadata or the backend database; egress is limited to the LLM API and necessary OSINT endpoints.
