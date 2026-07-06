@@ -56,10 +56,34 @@ class Settings(BaseSettings):
     STRIPE_SECRET_KEY: str = ""
     STRIPE_WEBHOOK_SECRET: str = ""
 
-    # --- LLM providers (passed through to Strix containers) --------------
+    # --- LLM providers (passed through to Strix) -------------------------
+    # Model id in LiteLLM `provider/model` form, e.g. "openai/gpt-4o" or
+    # "anthropic/claude-sonnet-4-6". Consumed by Strix as $STRIX_LLM.
     STRIX_LLM: str = "openai/gpt-4o"
+    # Strix authenticates with a single $LLM_API_KEY. If left blank we fall
+    # back to the provider-specific key inferred from STRIX_LLM's prefix.
+    LLM_API_KEY: str = ""
     OPENAI_API_KEY: str = ""
     ANTHROPIC_API_KEY: str = ""
+    # Optional: enables Strix's web-search capability.
+    PERPLEXITY_API_KEY: str = ""
+
+    # --- Strix engine -----------------------------------------------------
+    # Executable name/path of the Strix CLI (installed from `strix-agent`).
+    STRIX_BIN: str = "strix"
+    # Base directory for per-scan working dirs (repo checkout + strix_runs).
+    STRIX_WORK_DIR: str = "/tmp/aegis-scans"
+    # Hard wall-clock cap for a single Strix subprocess. Keep below Celery's
+    # task_time_limit (see workers/celery_app.py) so we fail the scan cleanly
+    # rather than having the worker killed mid-run.
+    STRIX_SCAN_TIMEOUT_SECONDS: int = 60 * 60
+    # Optional guardrail: cap LLM spend per scan (USD). None = no cap.
+    STRIX_MAX_BUDGET_USD: float | None = None
+    # Optional: one of none|minimal|low|medium|high|xhigh (Strix default used
+    # when blank).
+    STRIX_REASONING_EFFORT: str = ""
+    # Timeout for the `git clone` of the target repo (seconds).
+    GIT_CLONE_TIMEOUT_SECONDS: int = 300
 
     # --- CORS -------------------------------------------------------------
     BACKEND_CORS_ORIGINS: List[AnyHttpUrl] | List[str] = ["http://localhost:3000"]
@@ -70,6 +94,22 @@ class Settings(BaseSettings):
         if isinstance(v, str) and not v.startswith("["):
             return [origin.strip() for origin in v.split(",") if origin.strip()]
         return v
+
+    @property
+    def strix_llm_api_key(self) -> str:
+        """The LLM key Strix should authenticate with.
+
+        Prefers the explicit ``LLM_API_KEY``; otherwise infers it from the
+        provider prefix of ``STRIX_LLM`` (e.g. ``openai/…`` -> OpenAI key).
+        """
+        if self.LLM_API_KEY:
+            return self.LLM_API_KEY
+        provider = self.STRIX_LLM.split("/", 1)[0].lower()
+        if provider == "openai":
+            return self.OPENAI_API_KEY
+        if provider == "anthropic":
+            return self.ANTHROPIC_API_KEY
+        return ""
 
     @property
     def celery_broker(self) -> str:
