@@ -10,6 +10,7 @@ On any failure the Scan is marked ``failed`` with the error message.
 """
 from __future__ import annotations
 
+import os
 import shutil
 import uuid
 from datetime import datetime, timezone
@@ -24,7 +25,13 @@ from app.db.session import SessionLocal
 from app.models.enums import ScanStatus, ScanTrigger, Severity
 from app.models.scan import Scan
 from app.models.vulnerability import Vulnerability
-from app.services import github_app, repo_checkout, strix_report, strix_runner
+from app.services import (
+    github_app,
+    greybox_instructions,
+    repo_checkout,
+    strix_report,
+    strix_runner,
+)
 from app.workers.celery_app import celery
 
 logger = get_task_logger(__name__)
@@ -65,12 +72,25 @@ def run_strix_scan(self, scan_id: str) -> dict:
             repo.url, repo_dir, github_token=clone_token, ref=clone_ref
         )
 
-        run_dir = strix_runner.run_strix(
-            target_dir=repo_dir,
-            scan_mode=scan.scan_mode.value,
-            workdir=workdir,
-            instruction=scan.custom_instructions,
-        )
+        # Grey-box: authenticated dynamic testing against a live target, with
+        # credentials passed via a mode-0600 instruction file (never on argv).
+        greybox = repo.greybox
+        if greybox is not None:
+            instruction_file = _write_greybox_instructions(workdir, greybox, scan)
+            run_dir = strix_runner.run_strix(
+                target_dir=repo_dir,
+                scan_mode=scan.scan_mode.value,
+                workdir=workdir,
+                instruction_file=instruction_file,
+                extra_targets=[greybox.target_url],
+            )
+        else:
+            run_dir = strix_runner.run_strix(
+                target_dir=repo_dir,
+                scan_mode=scan.scan_mode.value,
+                workdir=workdir,
+                instruction=scan.custom_instructions,
+            )
 
         findings = strix_report.parse_report(run_dir)
         _persist_findings(db, scan, findings)
@@ -177,6 +197,29 @@ def _report_pr_failure(db, scan_id: str) -> None:
         )
     except Exception:  # noqa: BLE001
         logger.exception("Failed to report PR failure for scan %s", scan_id)
+
+
+def _write_greybox_instructions(workdir: Path, greybox, scan: Scan) -> Path:
+    """Write the auth instruction file (0600) in the ephemeral workdir.
+
+    ``greybox.password`` / ``greybox.extra`` are decrypted transparently on
+    read; the file lives only for the scan and is removed with the workdir.
+    """
+    text = greybox_instructions.build_instruction(
+        target_url=greybox.target_url,
+        login_url=greybox.login_url,
+        username=greybox.username,
+        password=greybox.password,
+        extra=greybox.extra,
+        custom_instructions=scan.custom_instructions,
+    )
+    path = workdir / "instructions.txt"
+    path.write_text(text, encoding="utf-8")
+    try:
+        os.chmod(path, 0o600)
+    except OSError:  # pragma: no cover - best-effort on non-POSIX hosts
+        pass
+    return path
 
 
 def _mark_running(db, scan: Scan) -> None:

@@ -42,9 +42,16 @@ def run_strix(
     scan_mode: str,
     workdir: Path,
     instruction: Optional[str] = None,
+    instruction_file: Optional[Path] = None,
+    extra_targets: Optional[list[str]] = None,
     timeout: Optional[int] = None,
 ) -> Path:
     """Run a Strix scan against ``target_dir`` and return its run directory.
+
+    ``extra_targets`` adds further ``--target`` values (e.g. a live app URL for
+    grey-box testing). ``instruction_file`` (mutually exclusive with
+    ``instruction``) passes ``--instruction-file`` so credentials never appear
+    on the command line.
 
     ``workdir`` is used as the process cwd; Strix creates ``strix_runs/`` under
     it, so a fresh per-scan ``workdir`` yields exactly one run directory to
@@ -58,7 +65,13 @@ def run_strix(
         )
 
     workdir.mkdir(parents=True, exist_ok=True)
-    cmd = _build_command(target_dir=target_dir, scan_mode=scan_mode, instruction=instruction)
+    cmd = _build_command(
+        target_dir=target_dir,
+        scan_mode=scan_mode,
+        instruction=instruction,
+        instruction_file=instruction_file,
+        extra_targets=extra_targets,
+    )
     env = _build_env(api_key)
 
     try:
@@ -89,18 +102,26 @@ def run_strix(
 
 
 def _build_command(
-    *, target_dir: Path, scan_mode: str, instruction: Optional[str]
+    *,
+    target_dir: Path,
+    scan_mode: str,
+    instruction: Optional[str],
+    instruction_file: Optional[Path] = None,
+    extra_targets: Optional[list[str]] = None,
 ) -> list[str]:
-    cmd = [
-        settings.STRIX_BIN,
-        "--non-interactive",
-        "--target",
-        str(target_dir),
-        "--scan-mode",
-        scan_mode,
-    ]
-    if instruction and instruction.strip():
+    cmd = [settings.STRIX_BIN, "--non-interactive", "--target", str(target_dir)]
+    for extra in extra_targets or []:
+        if extra and extra.strip():
+            cmd += ["--target", extra.strip()]
+    cmd += ["--scan-mode", scan_mode]
+
+    # --instruction and --instruction-file are mutually exclusive; the file
+    # form is used for grey-box so credentials stay off the command line.
+    if instruction_file is not None:
+        cmd += ["--instruction-file", str(instruction_file)]
+    elif instruction and instruction.strip():
         cmd += ["--instruction", instruction.strip()]
+
     if settings.STRIX_MAX_BUDGET_USD:
         cmd += ["--max-budget-usd", str(settings.STRIX_MAX_BUDGET_USD)]
     return cmd
