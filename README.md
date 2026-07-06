@@ -216,6 +216,7 @@ All endpoints are versioned under `/api/v1`.
 | `/users/me`           | GET    | Yes  | Current user profile and subscription status         |
 | `/repos`              | GET    | Yes  | List authorized GitHub repositories                  |
 | `/repos`              | POST   | Yes  | Sync/add a repository to the user's dashboard        |
+| `/repos/{id}/greybox` | GET/PUT/DELETE | Yes | Authenticated-testing config (secrets write-only) |
 | `/scans`              | POST   | Yes  | Trigger a new Strix scan (gated by subscription/quota) |
 | `/scans/{id}`         | GET    | Yes  | Status and metadata of a specific scan               |
 | `/scans/{id}/report`  | GET    | Yes  | Detailed vulnerabilities and PoCs for a scan         |
@@ -260,6 +261,20 @@ Explore and try endpoints interactively at `/docs` (Swagger UI) or `/redoc`.
 6. **Store** — findings are mapped into `vulnerabilities`, the scan is marked
    `completed`, and the working dir is removed. Any failure marks the scan
    `failed` with the error message.
+
+## Authenticated (Grey-Box) Testing
+
+A repository can carry a grey-box config so Strix tests **behind the login
+wall**: a live `target_url` plus test credentials (`login_url`, `username`,
+`password`, and free-form `extra` for headers/cookies/tokens). Secrets are
+encrypted at rest (AES-256-GCM) and never returned by the API — reads expose
+only `has_password` / `has_extra`.
+
+At scan time, if the repo has a grey-box config the worker adds the live URL as
+an extra Strix `--target` and passes an **instruction file** (mode `0600`, in
+the ephemeral scan workdir — never on the command line) describing the target
+and credentials. It applies to every scan of that repo — manual, scheduled, and
+pull-request. Manage it from the Repositories page ("Auth" on each repo card).
 
 ## CI/CD GitHub App
 
@@ -338,7 +353,7 @@ localhost:8000/api/v1/billing/webhook`).
 - [x] Strix orchestration and report ingestion (worker)
 - [x] Stripe subscription gating and billing webhooks
 - [x] CI/CD GitHub App — scan on pull requests and comment findings
-- [ ] Authenticated (grey-box) testing behind login walls
+- [x] Authenticated (grey-box) testing behind login walls
 - [ ] Auto-fix — open PRs with AI-suggested patches
 - [x] Scheduled recurring scans for continuous attack-surface monitoring
 

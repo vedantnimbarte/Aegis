@@ -65,7 +65,7 @@ dashboard/
 │   ├── auth/callback/        # OAuth code exchange
 │   └── (app)/                # authenticated route group (guard + shell)
 │       ├── page.tsx          # Overview: metrics + recent scans
-│       ├── repos/            # connect repos, launch scans, schedule
+│       ├── repos/            # connect repos, launch scans, schedule, grey-box auth
 │       ├── scans/            # history list + [id] detailed report
 │       ├── billing/          # plan, usage, Stripe checkout/portal
 │       └── settings/         # GitHub App (CI/CD) integration
@@ -94,6 +94,13 @@ and Aegis scans every pull request and posts a findings comment + check run.
 After installing, GitHub redirects back to `/settings?installation_id=…`, which
 the page claims automatically.
 
+## Authenticated (grey-box) testing
+
+Each connected repo can carry a grey-box config (the "Auth" button on its card):
+a live target URL plus test credentials so Strix scans behind the login wall.
+Secrets are write-only — the form shows whether a password/extra is set and
+preserves it unless you type a new value.
+
 ## Roadmap (not yet built)
 
-- Authenticated (grey-box) testing behind login walls
+- Auto-fix — open PRs with AI-suggested patches
