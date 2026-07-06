@@ -20,6 +20,7 @@ from app.core.config import settings
 ACCESS_TOKEN_TYPE = "access"
 REFRESH_TOKEN_TYPE = "refresh"
 PASSWORD_RESET_TOKEN_TYPE = "password_reset"
+EMAIL_VERIFY_TOKEN_TYPE = "email_verify"
 
 # bcrypt only considers the first 72 bytes of a password; longer inputs raise
 # in bcrypt >= 4.x. We truncate to that limit (standard bcrypt behaviour).
@@ -99,6 +100,19 @@ def create_password_reset_token(subject: str | Any, hashed_password: Optional[st
         "sub": str(subject),
         "type": PASSWORD_RESET_TOKEN_TYPE,
         "pwf": password_fingerprint(hashed_password),
+        "iat": int(now.timestamp()),
+        "exp": int(expire.timestamp()),
+    }
+    return jwt.encode(claims, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
+
+
+# --- Email verification tokens --------------------------------------------
+def create_email_verification_token(subject: str | Any) -> str:
+    now = datetime.now(timezone.utc)
+    expire = now + timedelta(hours=settings.EMAIL_VERIFICATION_TOKEN_EXPIRE_HOURS)
+    claims = {
+        "sub": str(subject),
+        "type": EMAIL_VERIFY_TOKEN_TYPE,
         "iat": int(now.timestamp()),
         "exp": int(expire.timestamp()),
     }

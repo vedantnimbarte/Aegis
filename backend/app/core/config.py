@@ -45,6 +45,8 @@ class Settings(BaseSettings):
     # current password hash, so it becomes invalid the moment the password
     # changes (single-use).
     PASSWORD_RESET_TOKEN_EXPIRE_MINUTES: int = 30
+    # Email-verification links are less sensitive and longer-lived.
+    EMAIL_VERIFICATION_TOKEN_EXPIRE_HOURS: int = 48
 
     # --- Email (SMTP) -----------------------------------------------------
     # When SMTP_HOST is blank, emails are logged instead of sent (dev mode).

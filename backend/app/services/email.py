@@ -49,6 +49,26 @@ def send_email(
         logger.exception("Failed to send email to %s", to)
 
 
+def send_verification_email(to: str, verify_url: str) -> None:
+    subject = "Verify your Aegis email"
+    text = (
+        "Welcome to Aegis! Confirm your email address to unlock scanning.\n\n"
+        f"Verify here:\n{verify_url}\n\n"
+        "If you didn't create an Aegis account, you can ignore this email."
+    )
+    html = (
+        f'<div style="font-family:system-ui,sans-serif;line-height:1.5;color:#111">'
+        f'<h2 style="margin:0 0 12px">Verify your email</h2>'
+        f"<p>Welcome to Aegis! Confirm your email address to unlock scanning.</p>"
+        f'<p><a href="{verify_url}" style="display:inline-block;background:#22D3EE;'
+        f'color:#07090E;font-weight:600;text-decoration:none;padding:10px 18px;'
+        f'border-radius:8px">Verify email</a></p>'
+        f'<p style="color:#667;font-size:13px">If you didn\'t create an Aegis '
+        f"account, you can ignore this email.</p></div>"
+    )
+    send_email(to, subject, text, html)
+
+
 def send_password_reset_email(to: str, reset_url: str) -> None:
     minutes = settings.PASSWORD_RESET_TOKEN_EXPIRE_MINUTES
     subject = "Reset your Aegis password"
