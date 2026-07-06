@@ -67,6 +67,18 @@ class Settings(BaseSettings):
     GITHUB_CLIENT_SECRET: str = ""
     GITHUB_OAUTH_REDIRECT_URI: str = ""
 
+    # --- GitHub App (CI/CD PR scanning) ----------------------------------
+    # A separate GitHub App (not the OAuth app) that installs on repos, receives
+    # pull_request webhooks, and posts a findings comment + check run.
+    GITHUB_APP_ID: str = ""
+    GITHUB_APP_SLUG: str = ""  # for the install URL: github.com/apps/<slug>
+    # RSA private key (PEM). Accepts a literal PEM, a "\n"-escaped PEM, or a
+    # base64-encoded PEM (recommended for single-line env vars).
+    GITHUB_APP_PRIVATE_KEY: str = ""
+    GITHUB_APP_WEBHOOK_SECRET: str = ""
+    # Comma-separated severities that fail the PR check run.
+    GITHUB_CHECK_FAIL_SEVERITIES: str = "critical,high"
+
     # --- Stripe -----------------------------------------------------------
     STRIPE_SECRET_KEY: str = ""
     STRIPE_WEBHOOK_SECRET: str = ""

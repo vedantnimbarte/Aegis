@@ -50,6 +50,14 @@ class ScanFrequency(str, enum.Enum):
     MONTHLY = "monthly"
 
 
+class ScanTrigger(str, enum.Enum):
+    """What initiated a scan."""
+
+    MANUAL = "manual"
+    SCHEDULED = "scheduled"
+    PULL_REQUEST = "pull_request"
+
+
 class Severity(str, enum.Enum):
     CRITICAL = "critical"
     HIGH = "high"
