@@ -68,5 +68,4 @@ prompt (see `NewScanAction` and the 402 handling in the repos / new-scan flows).
 
 ## Roadmap (not yet built)
 
-- PDF export of a scan report
 - Email/password auth (backend currently exposes GitHub OAuth only)

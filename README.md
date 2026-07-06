@@ -212,6 +212,7 @@ All endpoints are versioned under `/api/v1`.
 | `/scans`              | POST   | Yes  | Trigger a new Strix scan (gated by subscription/quota) |
 | `/scans/{id}`         | GET    | Yes  | Status and metadata of a specific scan               |
 | `/scans/{id}/report`  | GET    | Yes  | Detailed vulnerabilities and PoCs for a scan         |
+| `/scans/{id}/report.pdf` | GET | Yes  | Download the report as a PDF (compliance/sharing)    |
 | `/billing/summary`    | GET    | Yes  | Current plan, usage vs. limits, and plan catalog     |
 | `/billing/checkout`   | POST   | Yes  | Start a Stripe Checkout session for a self-serve tier |
 | `/billing/portal`     | POST   | Yes  | Open the Stripe billing portal to manage a plan      |
@@ -282,7 +283,7 @@ localhost:8000/api/v1/billing/webhook`).
 
 ## Roadmap
 
-- [ ] Web dashboard (Next.js): scan history, detailed reports, PDF export
+- [x] Web dashboard (Next.js): scan history, detailed reports, PDF export
 - [x] Strix orchestration and report ingestion (worker)
 - [x] Stripe subscription gating and billing webhooks
 - [ ] CI/CD GitHub App — scan on pull requests and comment findings
