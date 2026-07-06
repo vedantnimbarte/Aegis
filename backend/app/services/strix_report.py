@@ -43,6 +43,9 @@ class ParsedFinding:
     owasp_category: Optional[str] = None
     cvss_score: Optional[float] = None
     file_path: Optional[str] = None
+    # Concrete before/after code fixes Strix suggested, for auto-fix PRs:
+    # a list of {"file", "fix_before", "fix_after"} (None if none applicable).
+    suggested_fix: Optional[list[dict]] = None
 
 
 def parse_report(run_dir: Path) -> list[ParsedFinding]:
@@ -86,7 +89,22 @@ def _map_finding(item: dict[str, Any]) -> ParsedFinding:
         or None,
         cvss_score=_coerce_float(item.get("cvss")),
         file_path=_primary_file_path(item),
+        suggested_fix=_extract_fixes(item),
     )
+
+
+def _extract_fixes(item: dict[str, Any]) -> Optional[list[dict]]:
+    """Structured before/after fixes from Strix code locations (for auto-fix)."""
+    fixes: list[dict] = []
+    for loc in item.get("code_locations") or []:
+        if not isinstance(loc, dict):
+            continue
+        file = _coerce_str(loc.get("file"))
+        before = _coerce_str(loc.get("fix_before"))
+        after = _coerce_str(loc.get("fix_after"))
+        if file and before and after and before != after:
+            fixes.append({"file": file, "fix_before": before, "fix_after": after})
+    return fixes or None
 
 
 def _coerce_severity(value: Any) -> Severity:
