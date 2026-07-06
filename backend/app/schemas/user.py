@@ -9,7 +9,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict
 
-from app.models.enums import SubscriptionTier
+from app.models.enums import SubscriptionStatus, SubscriptionTier
 
 
 class UserRead(BaseModel):
@@ -19,6 +19,9 @@ class UserRead(BaseModel):
     email: str
     github_username: str | None = None
     subscription_tier: SubscriptionTier
+    subscription_status: SubscriptionStatus
+    has_active_subscription: bool
+    subscription_current_period_end: datetime | None = None
     stripe_customer_id: str | None = None
     is_active: bool
     created_at: datetime
