@@ -23,6 +23,10 @@ class User(UUIDMixin, TimestampMixin, Base):
     )
     # Nullable because GitHub-OAuth-only users may not set a password.
     hashed_password: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    # Email/password sign-ups start unverified; GitHub provides a verified email.
+    email_verified: Mapped[bool] = mapped_column(
+        default=False, server_default="false", nullable=False
+    )
 
     # OAuth token for the GitHub API — encrypted at rest (AES-256-GCM).
     github_token: Mapped[Optional[str]] = mapped_column(
