@@ -61,6 +61,8 @@ class Scan(UUIDMixin, TimestampMixin, Base):
     celery_task_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     # Populated when status == FAILED.
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # URL of the auto-fix pull request, once generated.
+    autofix_pr_url: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)
 
     started_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True

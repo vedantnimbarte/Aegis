@@ -248,6 +248,7 @@ def _persist_findings(db, scan: Scan, findings: list[strix_report.ParsedFinding]
                 owasp_category=f.owasp_category[:128] if f.owasp_category else None,
                 cvss_score=f.cvss_score,
                 file_path=f.file_path,
+                suggested_fix=f.suggested_fix,
             )
         )
     db.flush()
