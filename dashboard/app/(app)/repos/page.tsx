@@ -2,6 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { GitBranch, Lock, Plus, Radar, Check, ExternalLink } from "lucide-react";
+import Link from "next/link";
 import { useMemo, useState } from "react";
 
 import { NewScanDialog } from "@/components/NewScanDialog";
@@ -13,7 +14,7 @@ import {
   PageHeader,
   Spinner,
 } from "@/components/ui";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 import { relativeTime } from "@/lib/format";
 import type { GitHubRepo, Repository } from "@/lib/types";
 
@@ -98,8 +99,23 @@ export default function ReposPage() {
         )}
 
         {connectMutation.error ? (
-          <div className="mt-3">
-            <ErrorState message="Could not connect that repository. Please try again." />
+          <div className="mt-3 space-y-2.5">
+            <ErrorState
+              message={
+                connectMutation.error instanceof ApiError
+                  ? connectMutation.error.message
+                  : "Could not connect that repository. Please try again."
+              }
+            />
+            {connectMutation.error instanceof ApiError &&
+            connectMutation.error.status === 402 ? (
+              <Link
+                href="/billing"
+                className="inline-flex items-center gap-1.5 text-[12px] font-medium text-cyan-soft hover:text-cyan"
+              >
+                View plans &amp; upgrade →
+              </Link>
+            ) : null}
           </div>
         ) : null}
       </section>

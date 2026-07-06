@@ -3,7 +3,7 @@
 // The authenticated app chrome: a fixed sidebar nav + top bar with the user
 // menu. Wraps every page under the (app) route group.
 
-import { LayoutDashboard, GitBranch, Radar, ShieldHalf, LogOut } from "lucide-react";
+import { LayoutDashboard, GitBranch, Radar, ShieldHalf, LogOut, CreditCard } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
@@ -15,6 +15,7 @@ const NAV = [
   { href: "/", label: "Overview", icon: LayoutDashboard, exact: true },
   { href: "/repos", label: "Repositories", icon: GitBranch, exact: false },
   { href: "/scans", label: "Scans", icon: Radar, exact: false },
+  { href: "/billing", label: "Billing", icon: CreditCard, exact: false },
 ];
 
 export function AppShell({ children }: { children: ReactNode }) {

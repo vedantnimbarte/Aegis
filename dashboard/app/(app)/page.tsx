@@ -1,13 +1,12 @@
 "use client";
 
 import { useQueries, useQuery } from "@tanstack/react-query";
-import { GitBranch, Radar, ShieldAlert, Activity, Gauge, Plus } from "lucide-react";
+import { GitBranch, Radar, ShieldAlert, Activity, Gauge } from "lucide-react";
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 
-import { NewScanDialog } from "@/components/NewScanDialog";
+import { NewScanAction } from "@/components/NewScanAction";
 import {
-  Button,
   Card,
   EmptyState,
   ErrorState,
@@ -23,8 +22,6 @@ import type { Scan, Severity } from "@/lib/types";
 const MAX_REPORTS = 20;
 
 export default function OverviewPage() {
-  const [dialogOpen, setDialogOpen] = useState(false);
-
   const scansQuery = useQuery({ queryKey: ["scans"], queryFn: () => api.listScans() });
   const reposQuery = useQuery({ queryKey: ["repos"], queryFn: api.listRepos });
 
@@ -75,13 +72,7 @@ export default function OverviewPage() {
       <PageHeader
         title="Overview"
         subtitle="Your continuous testing at a glance."
-        action={
-          repos.length > 0 ? (
-            <Button icon={Plus} onClick={() => setDialogOpen(true)}>
-              New scan
-            </Button>
-          ) : null
-        }
+        action={<NewScanAction repositories={repos} />}
       />
 
       {/* Metric cards */}
@@ -119,21 +110,7 @@ export default function OverviewPage() {
           <EmptyState
             icon={Activity}
             title="No scans yet"
-            action={
-              repos.length > 0 ? (
-                <Button icon={Plus} onClick={() => setDialogOpen(true)}>
-                  Launch your first scan
-                </Button>
-              ) : (
-                <Link
-                  href="/repos"
-                  className="inline-flex items-center justify-center gap-2 rounded-lg bg-cyan px-4 py-2.5 font-display text-[13px] font-semibold text-obsidian transition-all hover:bg-cyan-soft"
-                >
-                  <GitBranch className="h-4 w-4" strokeWidth={2} />
-                  Connect a repository
-                </Link>
-              )
-            }
+            action={<NewScanAction repositories={repos} label="Launch your first scan" />}
           >
             {repos.length > 0
               ? "Launch a pentest against one of your connected repositories."
@@ -149,10 +126,6 @@ export default function OverviewPage() {
           </Card>
         )}
       </section>
-
-      {dialogOpen ? (
-        <NewScanDialog repositories={repos} onClose={() => setDialogOpen(false)} />
-      ) : null}
     </>
   );
 }

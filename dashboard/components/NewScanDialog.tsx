@@ -5,6 +5,7 @@
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Radar, X } from "lucide-react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
@@ -57,6 +58,8 @@ export function NewScanDialog({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
+  const isGateError =
+    mutation.error instanceof ApiError && mutation.error.status === 402;
   const errorMessage =
     mutation.error instanceof ApiError
       ? mutation.error.message
@@ -153,7 +156,20 @@ export function NewScanDialog({
             />
           </div>
 
-          {errorMessage ? <ErrorState message={errorMessage} /> : null}
+          {errorMessage ? (
+            <div className="space-y-2.5">
+              <ErrorState message={errorMessage} />
+              {isGateError ? (
+                <Link
+                  href="/billing"
+                  onClick={onClose}
+                  className="inline-flex items-center gap-1.5 text-[12px] font-medium text-cyan-soft hover:text-cyan"
+                >
+                  View plans &amp; upgrade →
+                </Link>
+              ) : null}
+            </div>
+          ) : null}
         </div>
 
         <div className="flex items-center justify-end gap-2.5 border-t border-line px-5 py-4">
