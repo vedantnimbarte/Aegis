@@ -14,6 +14,7 @@ import { Suspense, useEffect, useRef } from "react";
 
 import { api, ApiError } from "@/lib/api";
 import { Button, Card, ErrorState, PageHeader, Pill, Spinner } from "@/components/ui";
+import { IntegrationsCard } from "@/components/IntegrationsCard";
 import { relativeTime } from "@/lib/format";
 import type { Installation } from "@/lib/types";
 
@@ -123,6 +124,8 @@ function SettingsInner() {
           </>
         )}
       </Card>
+
+      <IntegrationsCard />
     </>
   );
 }

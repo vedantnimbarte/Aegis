@@ -201,6 +201,11 @@ export const api = {
 
   // --- User ---
   me: () => request<User>("/users/me"),
+  updateIntegrations: (body: {
+    llm_model?: string | null;
+    llm_api_key?: string | null;
+    slack_webhook_url?: string | null;
+  }) => request<User>("/users/me/integrations", { method: "PATCH", body }),
 
   // --- Repositories ---
   listRepos: () => request<Repository[]>("/repos"),

@@ -26,8 +26,11 @@ from app.models.enums import ScanStatus, ScanTrigger, Severity
 from app.models.scan import Scan
 from app.models.vulnerability import Vulnerability
 from app.services import (
+    billing_plans,
+    email,
     github_app,
     greybox_instructions,
+    notifications,
     repo_checkout,
     strix_report,
     strix_runner,
@@ -72,6 +75,9 @@ def run_strix_scan(self, scan_id: str) -> dict:
             repo.url, repo_dir, github_token=clone_token, ref=clone_ref
         )
 
+        # BYOK: Pro/Enterprise users may run scans on their own LLM key/model.
+        byok_model, byok_key = _byok_credentials(repo.user)
+
         # Grey-box: authenticated dynamic testing against a live target, with
         # credentials passed via a mode-0600 instruction file (never on argv).
         greybox = repo.greybox
@@ -83,6 +89,8 @@ def run_strix_scan(self, scan_id: str) -> dict:
                 workdir=workdir,
                 instruction_file=instruction_file,
                 extra_targets=[greybox.target_url],
+                llm_model=byok_model,
+                llm_api_key=byok_key,
             )
         else:
             run_dir = strix_runner.run_strix(
@@ -90,6 +98,8 @@ def run_strix_scan(self, scan_id: str) -> dict:
                 scan_mode=scan.scan_mode.value,
                 workdir=workdir,
                 instruction=scan.custom_instructions,
+                llm_model=byok_model,
+                llm_api_key=byok_key,
             )
 
         findings = strix_report.parse_report(run_dir)
@@ -98,6 +108,7 @@ def run_strix_scan(self, scan_id: str) -> dict:
 
         if is_pr:
             _report_pr_result(scan, findings)
+        _notify(db, scan_id, ScanStatus.COMPLETED.value, findings)
 
         logger.info("Scan %s completed with %d finding(s)", scan_id, len(findings))
         return {"scan_id": scan_id, "status": ScanStatus.COMPLETED.value, "findings": len(findings)}
@@ -105,6 +116,7 @@ def run_strix_scan(self, scan_id: str) -> dict:
     except SoftTimeLimitExceeded:
         _fail(db, scan_id, "Scan exceeded the maximum allowed run time.")
         _report_pr_failure(db, scan_id)
+        _notify(db, scan_id, ScanStatus.FAILED.value)
         raise
     except (
         repo_checkout.CheckoutError,
@@ -115,11 +127,13 @@ def run_strix_scan(self, scan_id: str) -> dict:
         logger.warning("Scan %s failed: %s", scan_id, exc)
         _fail(db, scan_id, str(exc))
         _report_pr_failure(db, scan_id)
+        _notify(db, scan_id, ScanStatus.FAILED.value)
         return {"scan_id": scan_id, "status": ScanStatus.FAILED.value}
     except Exception as exc:  # noqa: BLE001 - last-resort guard so the row never stays 'running'
         logger.exception("Scan %s failed unexpectedly", scan_id)
         _fail(db, scan_id, f"Unexpected error: {exc}")
         _report_pr_failure(db, scan_id)
+        _notify(db, scan_id, ScanStatus.FAILED.value)
         return {"scan_id": scan_id, "status": ScanStatus.FAILED.value}
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
@@ -140,6 +154,54 @@ def _severity_counts(findings: list[strix_report.ParsedFinding]) -> dict[str, in
 
 def _report_url(scan: Scan) -> str:
     return f"{settings.DASHBOARD_URL}/scans/{scan.id}"
+
+
+def _byok_credentials(user) -> tuple[Optional[str], Optional[str]]:
+    """The user's own LLM model/key if they set one and their tier allows BYOK.
+
+    Returns ``(None, None)`` otherwise, so the runner falls back to the shared
+    platform config.
+    """
+    if user.llm_api_key and billing_plans.limits_for(user.subscription_tier).byok:
+        return user.llm_model, user.llm_api_key
+    return None, None
+
+
+def _notify(db, scan_id: str, status: str, findings=None) -> None:
+    """Notify the scan owner it finished — by email, and Slack if configured.
+
+    Re-fetches on a clean session so it works on the failure paths too. PR scans
+    are skipped for email since they already report in the pull request itself.
+    Both channels are best-effort and swallow their own delivery errors.
+    """
+    db.rollback()  # tolerate a poisoned session on the failure paths
+    scan = db.get(Scan, uuid.UUID(scan_id))
+    if scan is None:
+        return
+    user = scan.repository.user
+    counts = _severity_counts(findings) if findings else {}
+    total = len(findings) if findings else 0
+    report_url = _report_url(scan)
+    repo_name = scan.repository.name
+
+    if not _is_pr_scan(scan):
+        email.send_scan_complete_email(
+            user.email,
+            repo_name=repo_name,
+            status=status,
+            total=total,
+            counts=counts,
+            report_url=report_url,
+        )
+    if user.slack_webhook_url:
+        notifications.notify_scan_complete(
+            user.slack_webhook_url,
+            repo_name=repo_name,
+            status=status,
+            total=total,
+            counts=counts,
+            report_url=report_url,
+        )
 
 
 def _start_pr_check(db, scan: Scan, token: str) -> None:

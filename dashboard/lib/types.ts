@@ -32,6 +32,10 @@ export interface User {
   stripe_customer_id: string | null;
   is_active: boolean;
   created_at: string;
+  // Integrations (secrets are never returned — only presence flags).
+  llm_model: string | null;
+  has_llm_key: boolean;
+  has_slack: boolean;
 }
 
 export interface Plan {

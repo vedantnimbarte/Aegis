@@ -59,6 +59,18 @@ class User(UUIDMixin, TimestampMixin, Base):
 
     is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
 
+    # --- Integrations (Pro/Enterprise) ----------------------------------
+    # BYOK: user-supplied LLM model id (LiteLLM provider/model form) and API
+    # key. The key is encrypted at rest; both fall back to the platform's
+    # shared config when unset. Only honoured for tiers where byok is allowed.
+    llm_model: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    llm_api_key: Mapped[Optional[str]] = mapped_column(
+        EncryptedString(1024), nullable=True
+    )
+    # Slack incoming-webhook URL for scan-complete notifications. Never returned
+    # by the API (only a boolean indicating its presence).
+    slack_webhook_url: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)
+
     # Relationships -------------------------------------------------------
     repositories: Mapped[List["Repository"]] = relationship(
         back_populates="user",
@@ -84,6 +96,15 @@ class User(UUIDMixin, TimestampMixin, Base):
             return True
         # Compare timezone-aware; DB values are stored with tz.
         return end > datetime.now(timezone.utc)
+
+    @property
+    def has_llm_key(self) -> bool:
+        """Whether a BYOK LLM key is configured (secret itself never exposed)."""
+        return bool(self.llm_api_key)
+
+    @property
+    def has_slack(self) -> bool:
+        return bool(self.slack_webhook_url)
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"<User id={self.id} email={self.email!r}>"

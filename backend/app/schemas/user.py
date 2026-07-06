@@ -26,3 +26,19 @@ class UserRead(BaseModel):
     stripe_customer_id: str | None = None
     is_active: bool
     created_at: datetime
+    # Integrations (secrets themselves are never returned).
+    llm_model: str | None = None
+    has_llm_key: bool = False
+    has_slack: bool = False
+
+
+class UserIntegrationsUpdate(BaseModel):
+    """Partial update of a user's integration settings.
+
+    Only fields that are present are changed (PATCH semantics). An explicit
+    empty string clears that setting. The LLM key is write-only.
+    """
+
+    llm_model: str | None = None
+    llm_api_key: str | None = None
+    slack_webhook_url: str | None = None

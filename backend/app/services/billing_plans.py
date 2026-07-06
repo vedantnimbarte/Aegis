@@ -22,6 +22,7 @@ class PlanLimits:
     max_repos: Optional[int]
     monthly_scans: Optional[int]
     self_serve: bool  # can be purchased via self-serve Stripe Checkout
+    byok: bool = False  # may bring their own LLM key (Pro/Enterprise)
 
 
 # Source of truth for tier entitlements (see PRD §6). Free is the un-subscribed
@@ -29,8 +30,8 @@ class PlanLimits:
 PLAN_LIMITS: dict[SubscriptionTier, PlanLimits] = {
     SubscriptionTier.FREE: PlanLimits("Free", max_repos=0, monthly_scans=0, self_serve=False),
     SubscriptionTier.STARTER: PlanLimits("Starter", max_repos=3, monthly_scans=20, self_serve=True),
-    SubscriptionTier.PRO: PlanLimits("Pro", max_repos=None, monthly_scans=None, self_serve=True),
-    SubscriptionTier.ENTERPRISE: PlanLimits("Enterprise", max_repos=None, monthly_scans=None, self_serve=False),
+    SubscriptionTier.PRO: PlanLimits("Pro", max_repos=None, monthly_scans=None, self_serve=True, byok=True),
+    SubscriptionTier.ENTERPRISE: PlanLimits("Enterprise", max_repos=None, monthly_scans=None, self_serve=False, byok=True),
 }
 
 

@@ -45,6 +45,8 @@ def run_strix(
     instruction_file: Optional[Path] = None,
     extra_targets: Optional[list[str]] = None,
     timeout: Optional[int] = None,
+    llm_model: Optional[str] = None,
+    llm_api_key: Optional[str] = None,
 ) -> Path:
     """Run a Strix scan against ``target_dir`` and return its run directory.
 
@@ -53,11 +55,15 @@ def run_strix(
     ``instruction``) passes ``--instruction-file`` so credentials never appear
     on the command line.
 
+    ``llm_model``/``llm_api_key`` override the platform LLM (BYOK); either or
+    both fall back to the shared config when blank.
+
     ``workdir`` is used as the process cwd; Strix creates ``strix_runs/`` under
     it, so a fresh per-scan ``workdir`` yields exactly one run directory to
     locate afterwards.
     """
-    api_key = settings.strix_llm_api_key
+    model = llm_model or settings.STRIX_LLM
+    api_key = llm_api_key or settings.strix_llm_api_key
     if not api_key:
         raise StrixError(
             "No LLM API key configured for Strix. Set LLM_API_KEY (or the "
@@ -72,7 +78,7 @@ def run_strix(
         instruction_file=instruction_file,
         extra_targets=extra_targets,
     )
-    env = _build_env(api_key)
+    env = _build_env(model, api_key)
 
     try:
         proc = subprocess.run(
@@ -127,10 +133,10 @@ def _build_command(
     return cmd
 
 
-def _build_env(api_key: str) -> dict[str, str]:
+def _build_env(model: str, api_key: str) -> dict[str, str]:
     """Inherit the ambient env (incl. DOCKER_HOST) and add Strix's config."""
     env = os.environ.copy()
-    env["STRIX_LLM"] = settings.STRIX_LLM
+    env["STRIX_LLM"] = model
     env["LLM_API_KEY"] = api_key
     if settings.PERPLEXITY_API_KEY:
         env["PERPLEXITY_API_KEY"] = settings.PERPLEXITY_API_KEY
