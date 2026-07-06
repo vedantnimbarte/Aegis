@@ -111,13 +111,19 @@ class Settings(BaseSettings):
     # task_time_limit (see workers/celery_app.py) so we fail the scan cleanly
     # rather than having the worker killed mid-run.
     STRIX_SCAN_TIMEOUT_SECONDS: int = 60 * 60
-    # Optional guardrail: cap LLM spend per scan (USD). None = no cap.
-    STRIX_MAX_BUDGET_USD: float | None = None
+    # Guardrail: cap LLM spend per scan (USD) so one pathological repo can't
+    # burn unbounded tokens on the shared key. Set to None to disable (not
+    # recommended in production).
+    STRIX_MAX_BUDGET_USD: float | None = 10.0
     # Optional: one of none|minimal|low|medium|high|xhigh (Strix default used
     # when blank).
     STRIX_REASONING_EFFORT: str = ""
     # Timeout for the `git clone` of the target repo (seconds).
     GIT_CLONE_TIMEOUT_SECONDS: int = 300
+
+    # --- Rate limiting ----------------------------------------------------
+    # Redis-backed limits on abuse-prone auth endpoints. Disable in tests.
+    RATE_LIMIT_ENABLED: bool = True
 
     # --- CORS -------------------------------------------------------------
     BACKEND_CORS_ORIGINS: List[AnyHttpUrl] | List[str] = ["http://localhost:3000"]

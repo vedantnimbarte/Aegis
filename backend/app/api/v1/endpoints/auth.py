@@ -1,13 +1,14 @@
 """Authentication endpoints (GitHub OAuth + JWT issuance/refresh)."""
 from __future__ import annotations
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from jose import JWTError
 from sqlalchemy.orm import Session
 
 from app.api import deps
 from app.core import security
 from app.core.config import settings
+from app.core.rate_limit import limiter
 from app.db.session import get_db
 from app.models.user import User
 from app.schemas.auth import (
@@ -43,7 +44,9 @@ def _dispatch_verification_email(background_tasks: BackgroundTasks, user: User) 
 
 
 @router.post("/register", response_model=Token, status_code=status.HTTP_201_CREATED)
+@limiter.limit("10/hour")
 def register(
+    request: Request,
     payload: RegisterRequest,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
@@ -101,7 +104,10 @@ def resend_verification(
 
 
 @router.post("/login", response_model=Token)
-def login(payload: LoginRequest, db: Session = Depends(get_db)) -> Token:
+@limiter.limit("10/minute")
+def login(
+    request: Request, payload: LoginRequest, db: Session = Depends(get_db)
+) -> Token:
     """Authenticate with email + password and return a JWT pair."""
     user = user_service.authenticate_user(
         db, email=payload.email, password=payload.password
@@ -114,7 +120,10 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)) -> Token:
 
 
 @router.post("/github", response_model=Token)
-def github_oauth(payload: GitHubAuthRequest, db: Session = Depends(get_db)) -> Token:
+@limiter.limit("20/minute")
+def github_oauth(
+    request: Request, payload: GitHubAuthRequest, db: Session = Depends(get_db)
+) -> Token:
     """Exchange a GitHub OAuth code for an access token, upsert the user,
     and return an application JWT pair (access + refresh).
     """
@@ -146,7 +155,9 @@ def github_oauth(payload: GitHubAuthRequest, db: Session = Depends(get_db)) -> T
 
 
 @router.post("/forgot-password", status_code=status.HTTP_202_ACCEPTED)
+@limiter.limit("5/hour")
 def forgot_password(
+    request: Request,
     payload: ForgotPasswordRequest,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
@@ -169,8 +180,9 @@ def forgot_password(
 
 
 @router.post("/reset-password", response_model=Token)
+@limiter.limit("10/hour")
 def reset_password(
-    payload: ResetPasswordRequest, db: Session = Depends(get_db)
+    request: Request, payload: ResetPasswordRequest, db: Session = Depends(get_db)
 ) -> Token:
     """Set a new password using a valid reset token, then sign the user in."""
     invalid = HTTPException(

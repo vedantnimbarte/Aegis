@@ -9,10 +9,14 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from prometheus_fastapi_instrumentator import Instrumentator
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 from sqlalchemy import text
 
 from app.api.v1.router import api_router
 from app.core.config import settings
+from app.core.rate_limit import limiter
 from app.db.session import engine
 
 # Ensure every model is imported so its table is registered on Base.metadata.
@@ -42,6 +46,12 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# --- Rate limiting --------------------------------------------------------
+# The limiter is applied per-endpoint (see the auth router); register it and
+# its 429 handler here.
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
 # --- Middleware -----------------------------------------------------------
 app.add_middleware(
     CORSMiddleware,
@@ -60,3 +70,7 @@ async def health_check() -> dict:
 
 # --- API v1 routes --------------------------------------------------------
 app.include_router(api_router, prefix=settings.API_V1_PREFIX)
+
+# --- Metrics --------------------------------------------------------------
+# Exposes request latency/count/in-progress at GET /metrics for Prometheus.
+Instrumentator().instrument(app).expose(app, endpoint="/metrics", include_in_schema=False)

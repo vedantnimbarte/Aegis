@@ -29,5 +29,11 @@ docker==7.1.0          # Docker Engine API for Strix containers
 # --- Reporting ---
 fpdf2==2.7.9           # pure-Python PDF export of scan reports
 
+# --- Rate limiting ---
+slowapi==0.1.9         # Redis-backed limits on abuse-prone auth endpoints
+
+# --- Observability ---
+prometheus-fastapi-instrumentator==7.0.0  # exposes /metrics for Prometheus
+
 # --- Misc ---
 python-multipart==0.0.20
