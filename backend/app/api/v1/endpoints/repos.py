@@ -8,6 +8,7 @@ from app.api import deps
 from app.db.session import get_db
 from app.models.user import User
 from app.schemas.repository import GitHubRepo, RepositoryRead, RepositorySyncRequest
+from app.services import billing
 from app.services import github as github_service
 from app.services import repo_service
 
@@ -48,4 +49,18 @@ def sync_repository(
     db: Session = Depends(get_db),
 ) -> RepositoryRead:
     """Connect (or update) a GitHub repository on the user's dashboard."""
+    # Only gate *new* connections against the plan's repo cap; re-syncing an
+    # already-connected repo doesn't consume additional capacity.
+    already_connected = repo_service.get_by_github_id(
+        db, current_user, payload.github_repo_id
+    )
+    if already_connected is None:
+        try:
+            billing.assert_can_connect_repo(db, current_user)
+        except billing.PaymentRequiredError as exc:
+            raise HTTPException(
+                status.HTTP_402_PAYMENT_REQUIRED,
+                detail={"message": exc.detail, "reason": exc.reason},
+            )
+
     return repo_service.sync_repository(db, current_user, payload)

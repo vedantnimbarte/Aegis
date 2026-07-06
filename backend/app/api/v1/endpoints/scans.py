@@ -10,7 +10,7 @@ from app.api import deps
 from app.db.session import get_db
 from app.models.user import User
 from app.schemas.scan import ScanCreate, ScanRead, ScanReport
-from app.services import scan_service
+from app.services import billing, scan_service
 
 router = APIRouter(prefix="/scans", tags=["scans"])
 
@@ -32,6 +32,14 @@ def create_scan(
     db: Session = Depends(get_db),
 ) -> ScanRead:
     """Trigger a new Strix scan for a user-owned repository."""
+    try:
+        billing.assert_can_create_scan(db, current_user)
+    except billing.PaymentRequiredError as exc:
+        raise HTTPException(
+            status.HTTP_402_PAYMENT_REQUIRED,
+            detail={"message": exc.detail, "reason": exc.reason},
+        )
+
     scan = scan_service.create_scan(
         db,
         user=current_user,
