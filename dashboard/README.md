@@ -50,6 +50,10 @@ refreshes once on a `401` before retrying.
 link opens `/reset-password?token=…`, which sets a new password and signs the
 user in.
 
+**Email verification** — new email/password accounts are unverified; a banner
+prompts them (with resend) and scanning is blocked until they open the emailed
+`/verify-email?token=…` link. GitHub logins are already verified.
+
 ## Structure
 
 ```
@@ -77,4 +81,4 @@ prompt (see `NewScanAction` and the 402 handling in the repos / new-scan flows).
 
 ## Roadmap (not yet built)
 
-- Email verification on sign-up
+- Scheduled recurring scans
