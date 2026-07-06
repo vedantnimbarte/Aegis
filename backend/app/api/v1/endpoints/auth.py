@@ -7,12 +7,52 @@ from sqlalchemy.orm import Session
 
 from app.core import security
 from app.db.session import get_db
-from app.schemas.auth import GitHubAuthRequest, RefreshRequest
+from app.schemas.auth import (
+    GitHubAuthRequest,
+    LoginRequest,
+    RefreshRequest,
+    RegisterRequest,
+)
 from app.schemas.token import Token
 from app.services import github as github_service
 from app.services import user_service
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+
+def _issue_tokens(user_id) -> Token:
+    return Token(
+        access_token=security.create_access_token(user_id),
+        refresh_token=security.create_refresh_token(user_id),
+    )
+
+
+@router.post("/register", response_model=Token, status_code=status.HTTP_201_CREATED)
+def register(payload: RegisterRequest, db: Session = Depends(get_db)) -> Token:
+    """Create an account with email + password and return a JWT pair."""
+    try:
+        user = user_service.create_user_with_password(
+            db, email=payload.email, password=payload.password
+        )
+    except user_service.EmailAlreadyExistsError:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail="An account with this email already exists",
+        )
+    return _issue_tokens(user.id)
+
+
+@router.post("/login", response_model=Token)
+def login(payload: LoginRequest, db: Session = Depends(get_db)) -> Token:
+    """Authenticate with email + password and return a JWT pair."""
+    user = user_service.authenticate_user(
+        db, email=payload.email, password=payload.password
+    )
+    if user is None or not user.is_active:
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password"
+        )
+    return _issue_tokens(user.id)
 
 
 @router.post("/github", response_model=Token)
@@ -44,10 +84,7 @@ def github_oauth(payload: GitHubAuthRequest, db: Session = Depends(get_db)) -> T
         github_token=gh_token,
     )
 
-    return Token(
-        access_token=security.create_access_token(user.id),
-        refresh_token=security.create_refresh_token(user.id),
-    )
+    return _issue_tokens(user.id)
 
 
 @router.post("/refresh", response_model=Token)
@@ -69,7 +106,4 @@ def refresh_tokens(payload: RefreshRequest, db: Session = Depends(get_db)) -> To
     if user is None or not user.is_active:
         raise invalid
 
-    return Token(
-        access_token=security.create_access_token(user.id),
-        refresh_token=security.create_refresh_token(user.id),
-    )
+    return _issue_tokens(user.id)
