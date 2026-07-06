@@ -79,6 +79,12 @@ billing portal. Scanning and connecting repos are gated on an active
 subscription — unentitled actions return **402** and the UI shows an "Upgrade"
 prompt (see `NewScanAction` and the 402 handling in the repos / new-scan flows).
 
+## Scheduled scans
+
+Each connected repo on the Repositories page can have a recurring schedule
+(daily / weekly / monthly, at a chosen depth). The dialog creates, edits,
+pauses, or deletes it; the backend's Celery Beat dispatches due scans.
+
 ## Roadmap (not yet built)
 
-- Scheduled recurring scans
+- CI/CD GitHub App (scan on pull requests)

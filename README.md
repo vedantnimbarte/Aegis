@@ -82,7 +82,7 @@ Aegis uses a decoupled, service-oriented architecture that handles long-running 
 
 ```
 Aegis/
-├── docker-compose.yml        # Local stack: db, redis, api, worker
+├── docker-compose.yml        # Local stack: db, redis, api, worker, beat
 ├── prd.md                    # Product Requirements Document
 ├── specs.md                  # Technical Specification
 └── backend/
@@ -119,7 +119,8 @@ Aegis/
 
 ### Option A: Docker Compose (recommended)
 
-This brings up PostgreSQL, Redis, the API, and the Celery worker together.
+This brings up PostgreSQL, Redis, the API, the Celery worker, and Celery Beat
+(the recurring-scan scheduler) together.
 
 ```bash
 # 1. Configure environment
@@ -219,6 +220,10 @@ All endpoints are versioned under `/api/v1`.
 | `/scans/{id}`         | GET    | Yes  | Status and metadata of a specific scan               |
 | `/scans/{id}/report`  | GET    | Yes  | Detailed vulnerabilities and PoCs for a scan         |
 | `/scans/{id}/report.pdf` | GET | Yes  | Download the report as a PDF (compliance/sharing)    |
+| `/schedules`          | GET    | Yes  | List the user's recurring scan schedules             |
+| `/schedules`          | POST   | Yes  | Create a recurring schedule for a repository         |
+| `/schedules/{id}`     | PATCH  | Yes  | Update a schedule (cadence, depth, enabled)          |
+| `/schedules/{id}`     | DELETE | Yes  | Delete a recurring schedule                          |
 | `/billing/summary`    | GET    | Yes  | Current plan, usage vs. limits, and plan catalog     |
 | `/billing/checkout`   | POST   | Yes  | Start a Stripe Checkout session for a self-serve tier |
 | `/billing/portal`     | POST   | Yes  | Open the Stripe billing portal to manage a plan      |
@@ -251,6 +256,17 @@ Explore and try endpoints interactively at `/docs` (Swagger UI) or `/redoc`.
 6. **Store** — findings are mapped into `vulnerabilities`, the scan is marked
    `completed`, and the working dir is removed. Any failure marks the scan
    `failed` with the error message.
+
+## Scheduled Scans
+
+Repositories can have a recurring schedule (daily / weekly / monthly) for
+continuous attack-surface monitoring. **Celery Beat** ticks every few minutes
+and runs `enqueue_due_scheduled_scans`, which finds schedules whose
+`next_run_at` has passed, advances them, and dispatches a scan for each — but
+only when the owner is still entitled (verified email + active subscription
+within quota); otherwise it's skipped and retried next period. Manage schedules
+from the dashboard's Repositories page (`GET/POST /schedules`,
+`PATCH/DELETE /schedules/{id}`).
 
 ## Security Model
 
@@ -297,7 +313,7 @@ localhost:8000/api/v1/billing/webhook`).
 - [ ] CI/CD GitHub App — scan on pull requests and comment findings
 - [ ] Authenticated (grey-box) testing behind login walls
 - [ ] Auto-fix — open PRs with AI-suggested patches
-- [ ] Scheduled recurring scans for continuous attack-surface monitoring
+- [x] Scheduled recurring scans for continuous attack-surface monitoring
 
 See [prd.md](prd.md) and [specs.md](specs.md) for full product and technical details.
 
