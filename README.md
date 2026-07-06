@@ -4,7 +4,7 @@
 
 Aegis is a SaaS platform powered by the open-source [Strix](https://github.com/usestrix/strix) AI engine. It provides automated, continuous penetration testing for web applications and APIs. Unlike traditional SAST tools that flood developers with false positives, Aegis uses Strix's autonomous AI agents to dynamically execute code, validate vulnerabilities, and deliver real Proof-of-Concept (PoC) exploits with actionable remediation.
 
-> **Status:** Early development. The backend API, data model, auth, and the Strix scan worker (repo checkout → headless Strix run → report ingestion) are in place. The frontend and billing are the next phases.
+> **Status:** Feature-complete against the PRD (MVP + post-MVP): auth (email/password + GitHub OAuth, password reset, email verification), Stripe subscription gating, the full Strix scan worker, the Next.js dashboard with PDF export, scheduled recurring scans, the CI/CD GitHub App, authenticated grey-box testing, and auto-fix pull requests.
 
 ---
 
@@ -221,6 +221,7 @@ All endpoints are versioned under `/api/v1`.
 | `/scans/{id}`         | GET    | Yes  | Status and metadata of a specific scan               |
 | `/scans/{id}/report`  | GET    | Yes  | Detailed vulnerabilities and PoCs for a scan         |
 | `/scans/{id}/report.pdf` | GET | Yes  | Download the report as a PDF (compliance/sharing)    |
+| `/scans/{id}/autofix` | POST   | Yes  | Open a PR applying Strix's suggested fixes for the scan |
 | `/schedules`          | GET    | Yes  | List the user's recurring scan schedules             |
 | `/schedules`          | POST   | Yes  | Create a recurring schedule for a repository         |
 | `/schedules/{id}`     | PATCH  | Yes  | Update a schedule (cadence, depth, enabled)          |
@@ -261,6 +262,19 @@ Explore and try endpoints interactively at `/docs` (Swagger UI) or `/redoc`.
 6. **Store** — findings are mapped into `vulnerabilities`, the scan is marked
    `completed`, and the working dir is removed. Any failure marks the scan
    `failed` with the error message.
+
+## Auto-Fix Pull Requests
+
+During ingestion, Aegis stores the concrete before/after code fixes Strix
+suggests for each finding (`vulnerabilities.suggested_fix`). From a completed
+scan's report, **Generate fix PR** bundles every fixable finding into one pull
+request: it resolves the GitHub App installation for the repo owner, branches
+off the default branch, applies each stored fix to the affected files (a literal
+`fix_before → fix_after` replacement, skipping any that no longer match so
+unrelated code is never touched), and opens a PR. The PR URL is cached on the
+scan so it's generated once. Requires the GitHub App installed on the repo owner
+and an active subscription; gated with **402** (no subscription) / **400**
+(`reason: no_installation`).
 
 ## Authenticated (Grey-Box) Testing
 
@@ -354,7 +368,7 @@ localhost:8000/api/v1/billing/webhook`).
 - [x] Stripe subscription gating and billing webhooks
 - [x] CI/CD GitHub App — scan on pull requests and comment findings
 - [x] Authenticated (grey-box) testing behind login walls
-- [ ] Auto-fix — open PRs with AI-suggested patches
+- [x] Auto-fix — open PRs with AI-suggested patches
 - [x] Scheduled recurring scans for continuous attack-surface monitoring
 
 See [prd.md](prd.md) and [specs.md](specs.md) for full product and technical details.

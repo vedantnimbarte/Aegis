@@ -101,6 +101,14 @@ a live target URL plus test credentials so Strix scans behind the login wall.
 Secrets are write-only — the form shows whether a password/extra is set and
 preserves it unless you type a new value.
 
-## Roadmap (not yet built)
+## Auto-fix pull requests
 
-- Auto-fix — open PRs with AI-suggested patches
+A completed scan's report shows a **Generate fix PR** action when any finding
+has a suggested fix (each such finding also gets a "Fix" chip). It opens a
+GitHub pull request applying the fixes and links to it; once opened, the report
+shows a "View pull request" link instead.
+
+## Roadmap
+
+The MVP + PRD post-MVP scope is complete. Future ideas: GitLab/Bitbucket
+support, Slack/Jira notifications, SSO/SAML.
