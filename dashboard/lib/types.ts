@@ -46,7 +46,9 @@ export interface User {
   id: string;
   email: string;
   email_verified: boolean;
+  display_name: string | null;
   github_username: string | null;
+  has_password: boolean;
   subscription_tier: SubscriptionTier;
   subscription_status: SubscriptionStatus;
   has_active_subscription: boolean;
@@ -64,6 +66,30 @@ export interface User {
   jira_url: string | null;
   jira_project_key: string | null;
   linear_team_id: string | null;
+}
+
+/** A condition that stops the account being deleted. */
+export interface DeletionBlocker {
+  code: string;
+  message: string;
+  /** What the person has to do about it, in the interface's words. */
+  action: string;
+}
+
+/** Exactly what deleting the account destroys, counted from real rows. */
+export interface DeletionManifest {
+  organizations_deleted: string[];
+  organizations_left: string[];
+  targets: number;
+  scans: number;
+  findings: number;
+  triage_verdicts: number;
+  api_tokens: number;
+  share_links: number;
+  installations: number;
+  running_scans: number;
+  blockers: DeletionBlocker[];
+  can_delete: boolean;
 }
 
 // --- Organizations --------------------------------------------------------
