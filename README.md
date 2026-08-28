@@ -36,6 +36,7 @@ Two things separate it from a scanner. Every finding is **validated by exploitat
 - [Testing the AI Layer](#testing-the-ai-layer)
 - [Attack-Surface Discovery](#attack-surface-discovery)
 - [Compliance Reports & Sharing](#compliance-reports--sharing)
+- [Outbound Webhook](#outbound-webhook)
 - [Security Model](#security-model)
 - [Deployment](#deployment)
 - [Roadmap](#roadmap)
@@ -584,6 +585,53 @@ us for.
 transcripts, which together are a working recipe against the customer's
 production system. Only the token digest is stored, views are counted and
 audited, and every response is `no-store`.
+
+## Outbound Webhook
+
+Set a webhook URL and a shared secret in **Settings → Integrations** and Aegis
+POSTs one JSON body per finished scan, so findings can reach a SIEM or an
+internal service without Aegis building that integration.
+
+```json
+{
+  "event": "scan.completed",
+  "scan": { "id": "…", "repository": "acme/api", "status": "completed",
+            "report_url": "https://…/scans/…" },
+  "findings": { "total": 3, "by_severity": { "critical": 1, "high": 1,
+                "medium": 1, "low": 0, "info": 0 } }
+}
+```
+
+| Header | Value |
+| --- | --- |
+| `X-Aegis-Event` | the event name, currently always `scan.completed` |
+| `X-Aegis-Timestamp` | Unix seconds at delivery |
+| `X-Aegis-Signature` | `sha256=<hex>` |
+
+The signature is HMAC-SHA256 over `<timestamp>.<raw body>` using your secret.
+The timestamp is inside the signed material rather than only in a header, so a
+captured delivery cannot be replayed with a fresh one: reject a stale timestamp
+and the signature cannot be recomputed without the secret.
+
+Verify against the **raw** body — Aegis serializes once and signs the exact
+bytes it sends, so re-encoding a parsed object will not match:
+
+```python
+import hashlib, hmac, time
+
+def verify(secret: str, headers, body: bytes, tolerance: int = 300) -> bool:
+    timestamp = headers["X-Aegis-Timestamp"]
+    if abs(time.time() - int(timestamp)) > tolerance:
+        return False
+    expected = "sha256=" + hmac.new(
+        secret.encode(), timestamp.encode() + b"." + body, hashlib.sha256
+    ).hexdigest()
+    return hmac.compare_digest(expected, headers["X-Aegis-Signature"])
+```
+
+Deliveries are best-effort and are never retried: a webhook that cannot be
+reached must not turn a completed scan into a failed one. Treat the report API
+as the source of truth.
 
 ## Security Model
 
