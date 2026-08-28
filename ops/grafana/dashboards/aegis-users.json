@@ -5,9 +5,23 @@
   "timezone": "browser",
   "schemaVersion": 39,
   "_comment": "Bump `version` on every edit — Grafana's file provisioner ignores a changed dashboard whose version did not increase.",
-  "version": 3,
+  "version": 4,
   "refresh": "5m",
   "time": { "from": "now-90d", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "price_starter",
+        "label": "Starter $/mo",
+        "type": "textbox",
+        "query": "49",
+        "current": { "text": "49", "value": "49" },
+        "description": "Plan prices live in Stripe, not in this repo — set your real ones here and the revenue panels follow."
+      },
+      { "name": "price_pro", "label": "Pro $/mo", "type": "textbox", "query": "199", "current": { "text": "199", "value": "199" } },
+      { "name": "price_enterprise", "label": "Enterprise $/mo", "type": "textbox", "query": "999", "current": { "text": "999", "value": "999" } }
+    ]
+  },
   "panels": [
     { "id": 100, "type": "row", "title": "Accounts", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }, "collapsed": false, "panels": [] },
     {
@@ -497,6 +511,251 @@
           "rawQuery": true,
           "editorMode": "code",
           "rawSql": "WITH c AS (\n  SELECT id, date_trunc('week', created_at) AS cohort_week FROM users\n),\na AS (\n  SELECT DISTINCT c.id, c.cohort_week,\n         (floor(extract(epoch FROM date_trunc('week', e.created_at) - c.cohort_week) / 604800))::int AS wk\n  FROM c\n  JOIN audit_events e ON e.actor_user_id = c.id\n)\nSELECT to_char(c.cohort_week, 'YYYY-MM-DD') AS cohort,\n       count(DISTINCT c.id) AS signups,\n       count(DISTINCT a.id) FILTER (WHERE a.wk = 0)::float / count(DISTINCT c.id) AS \"W0\",\n       count(DISTINCT a.id) FILTER (WHERE a.wk = 1)::float / count(DISTINCT c.id) AS \"W1\",\n       count(DISTINCT a.id) FILTER (WHERE a.wk = 2)::float / count(DISTINCT c.id) AS \"W2\",\n       count(DISTINCT a.id) FILTER (WHERE a.wk = 3)::float / count(DISTINCT c.id) AS \"W3\",\n       count(DISTINCT a.id) FILTER (WHERE a.wk = 4)::float / count(DISTINCT c.id) AS \"W4\",\n       count(DISTINCT a.id) FILTER (WHERE a.wk = 5)::float / count(DISTINCT c.id) AS \"W5\",\n       count(DISTINCT a.id) FILTER (WHERE a.wk = 6)::float / count(DISTINCT c.id) AS \"W6\",\n       count(DISTINCT a.id) FILTER (WHERE a.wk = 7)::float / count(DISTINCT c.id) AS \"W7\"\nFROM c\nLEFT JOIN a ON a.id = c.id\nGROUP BY c.cohort_week\nORDER BY c.cohort_week DESC\nLIMIT 12"
+        }
+      ]
+    },
+
+    {
+      "id": 105,
+      "type": "row",
+      "title": "Revenue vs cost",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 93
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 50,
+      "title": "MRR",
+      "type": "stat",
+      "datasource": {
+        "type": "postgres",
+        "uid": "aegisdb"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 94
+      },
+      "description": "Subscribed accounts priced at the rates set in the dashboard variables above. Trialing accounts are counted \u2014 they are revenue you are about to have or about to lose.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "decimals": 2
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "SELECT sum(CASE WHEN subscription_status IN ('active', 'trialing')\n            THEN CASE subscription_tier\n                   WHEN 'starter' THEN ${price_starter}\n                   WHEN 'pro' THEN ${price_pro}\n                   WHEN 'enterprise' THEN ${price_enterprise}\n                   ELSE 0 END\n            ELSE 0 END::numeric) AS \"mrr\"\nFROM users u"
+        }
+      ]
+    },
+    {
+      "id": 51,
+      "title": "LLM cost (30d)",
+      "type": "stat",
+      "datasource": {
+        "type": "postgres",
+        "uid": "aegisdb"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 6,
+        "y": 94
+      },
+      "description": "What the scans actually cost to run. Only scans that recorded a cost count.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "decimals": 2
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "SELECT coalesce(sum(cost_usd), 0) AS \"llm cost\" FROM scans WHERE created_at > now() - interval '30 days'"
+        }
+      ]
+    },
+    {
+      "id": 52,
+      "title": "Gross margin",
+      "type": "stat",
+      "datasource": {
+        "type": "postgres",
+        "uid": "aegisdb"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 12,
+        "y": 94
+      },
+      "description": "One month of revenue against one month of LLM spend. Ignores infrastructure, salaries and Stripe's cut \u2014 it is the engine's margin, not the company's.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "decimals": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0.5
+              },
+              {
+                "color": "green",
+                "value": 0.8
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "WITH r AS (SELECT sum(CASE WHEN subscription_status IN ('active', 'trialing')\n            THEN CASE subscription_tier\n                   WHEN 'starter' THEN ${price_starter}\n                   WHEN 'pro' THEN ${price_pro}\n                   WHEN 'enterprise' THEN ${price_enterprise}\n                   ELSE 0 END\n            ELSE 0 END::numeric) AS mrr FROM users u),\n     c AS (SELECT coalesce(sum(cost_usd), 0)::numeric AS cost FROM scans WHERE created_at > now() - interval '30 days')\nSELECT (r.mrr - c.cost) / nullif(r.mrr, 0) AS \"gross margin\" FROM r, c"
+        }
+      ]
+    },
+    {
+      "id": 53,
+      "title": "Underwater orgs",
+      "type": "stat",
+      "datasource": {
+        "type": "postgres",
+        "uid": "aegisdb"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 94
+      },
+      "description": "Organizations whose scans cost more in the last 30 days than their owner's plan brings in. A free-tier org that somehow ran scans lands here too.",
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "WITH o AS (\n  SELECT org.id, CASE WHEN u.subscription_status IN ('active', 'trialing')\n            THEN CASE u.subscription_tier\n                   WHEN 'starter' THEN ${price_starter}\n                   WHEN 'pro' THEN ${price_pro}\n                   WHEN 'enterprise' THEN ${price_enterprise}\n                   ELSE 0 END\n            ELSE 0 END::numeric AS price\n  FROM organizations org JOIN users u ON u.id = org.owner_user_id\n)\nSELECT count(*) AS \"underwater\" FROM (\n  SELECT o.id, o.price - coalesce(sum(s.cost_usd), 0)::numeric AS margin\n  FROM o\n  LEFT JOIN targets t ON t.organization_id = o.id\n  LEFT JOIN scans s ON s.target_id = t.id AND s.created_at > now() - interval '30 days'\n  GROUP BY o.id, o.price\n) m WHERE margin < 0"
+        }
+      ]
+    },
+    {
+      "id": 54,
+      "title": "Per-organization economics (30d)",
+      "type": "table",
+      "datasource": {
+        "type": "postgres",
+        "uid": "aegisdb"
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 98
+      },
+      "description": "Worst margin first. Revenue is the owner's plan price; cost is every scan run against that org's targets.",
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "revenue/mo|llm cost 30d"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "currencyUSD"
+              },
+              {
+                "id": "decimals",
+                "value": 2
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "margin"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "currencyUSD"
+              },
+              {
+                "id": "decimals",
+                "value": 2
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background",
+                  "mode": "gradient"
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "continuous-RdYlGr"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "WITH o AS (\n  SELECT org.id, org.name, u.email AS owner, u.subscription_tier AS tier,\n         CASE WHEN u.subscription_status IN ('active', 'trialing')\n            THEN CASE u.subscription_tier\n                   WHEN 'starter' THEN ${price_starter}\n                   WHEN 'pro' THEN ${price_pro}\n                   WHEN 'enterprise' THEN ${price_enterprise}\n                   ELSE 0 END\n            ELSE 0 END::numeric AS price\n  FROM organizations org JOIN users u ON u.id = org.owner_user_id\n)\nSELECT o.name AS org, o.owner, o.tier,\n       o.price AS \"revenue/mo\",\n       count(s.id) AS \"scans 30d\",\n       coalesce(sum(s.cost_usd), 0)::numeric AS \"llm cost 30d\",\n       o.price - coalesce(sum(s.cost_usd), 0)::numeric AS \"margin\"\nFROM o\nLEFT JOIN targets t ON t.organization_id = o.id\nLEFT JOIN scans s ON s.target_id = t.id AND s.created_at > now() - interval '30 days'\nGROUP BY o.id, o.name, o.owner, o.tier, o.price\nORDER BY \"margin\" ASC\nLIMIT 20"
         }
       ]
     }
