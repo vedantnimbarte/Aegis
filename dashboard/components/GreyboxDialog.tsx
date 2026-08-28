@@ -1,6 +1,6 @@
 "use client";
 
-// Configure authenticated (grey-box) testing for a repository: a live target
+// Configure authenticated (grey-box) testing for a target: a live target
 // URL plus test credentials Strix uses to log in and test behind the login
 // wall. Secrets are write-only — the form shows whether a password/extra is
 // already set and preserves it unless the user types a new value.
@@ -10,23 +10,23 @@ import { KeyRound, Loader2, Trash2, X } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { api, ApiError } from "@/lib/api";
-import type { Repository } from "@/lib/types";
+import type { Target } from "@/lib/types";
 import { Button, ErrorState } from "./ui";
 
 export function GreyboxDialog({
-  repository,
+  target,
   onClose,
 }: {
-  repository: Repository;
+  target: Target;
   onClose: () => void;
 }) {
   const queryClient = useQueryClient();
-  const hasConfig = repository.has_greybox;
+  const hasConfig = target.has_greybox;
 
   // Load the existing config (non-secret fields) to prefill when editing.
   const configQuery = useQuery({
-    queryKey: ["greybox", repository.id],
-    queryFn: () => api.getGreybox(repository.id),
+    queryKey: ["greybox", target.id],
+    queryFn: () => api.getGreybox(target.id),
     enabled: hasConfig,
   });
 
@@ -49,7 +49,7 @@ export function GreyboxDialog({
 
   const refresh = () => {
     queryClient.invalidateQueries({ queryKey: ["repos"] });
-    queryClient.invalidateQueries({ queryKey: ["greybox", repository.id] });
+    queryClient.invalidateQueries({ queryKey: ["greybox", target.id] });
   };
 
   const save = useMutation({
@@ -68,7 +68,7 @@ export function GreyboxDialog({
       // Only send secrets when the user typed one, so blanks preserve existing.
       if (password) body.password = password;
       if (extra) body.extra = extra;
-      return api.putGreybox(repository.id, body);
+      return api.putGreybox(target.id, body);
     },
     onSuccess: () => {
       refresh();
@@ -77,7 +77,7 @@ export function GreyboxDialog({
   });
 
   const remove = useMutation({
-    mutationFn: () => api.deleteGreybox(repository.id),
+    mutationFn: () => api.deleteGreybox(target.id),
     onSuccess: () => {
       refresh();
       onClose();
@@ -134,7 +134,7 @@ export function GreyboxDialog({
               <h2 className="font-display text-[15px] font-semibold text-fg">
                 Authenticated testing
               </h2>
-              <p className="truncate font-mono text-[11px] text-faint">{repository.name}</p>
+              <p className="truncate font-mono text-[11px] text-faint">{target.name}</p>
             </div>
           </div>
           <button

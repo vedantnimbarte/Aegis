@@ -1,17 +1,17 @@
 "use client";
 
-// The primary "New scan" call-to-action, with subscription/repo gating baked
-// in so callers don't repeat the logic:
-//   - no active subscription  -> "Upgrade to scan" (→ /billing)
-//   - no connected repos       -> "Connect a repository" (→ /repos)
-//   - otherwise                -> opens the New scan dialog
+// The primary "New scan" call-to-action, with subscription/target gating
+// baked in so callers don't repeat the logic:
+//   - no active subscription -> "Upgrade to scan" (→ /billing)
+//   - no connected targets   -> "Add a target" (→ /targets)
+//   - otherwise              -> opens the New scan dialog
 
-import { GitBranch, Plus, Sparkles } from "lucide-react";
+import { Crosshair, Plus, Sparkles } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 
 import { useAuth } from "@/lib/auth";
-import type { Repository } from "@/lib/types";
+import type { Target } from "@/lib/types";
 import { Button, cn } from "./ui";
 import { NewScanDialog } from "./NewScanDialog";
 
@@ -19,11 +19,11 @@ const linkClasses =
   "inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2.5 font-display text-[13px] font-semibold transition-all";
 
 export function NewScanAction({
-  repositories,
+  targets,
   label = "New scan",
   className,
 }: {
-  repositories: Repository[];
+  targets: Target[];
   label?: string;
   className?: string;
 }) {
@@ -43,14 +43,14 @@ export function NewScanAction({
     );
   }
 
-  if (repositories.length === 0) {
+  if (targets.length === 0) {
     return (
       <Link
-        href="/repos"
+        href="/targets"
         className={cn(linkClasses, "border border-line bg-surface/80 text-fg hover:border-cyan/40", className)}
       >
-        <GitBranch className="h-4 w-4" strokeWidth={2} />
-        Connect a repository
+        <Crosshair className="h-4 w-4" strokeWidth={2} />
+        Add a target
       </Link>
     );
   }
@@ -60,7 +60,7 @@ export function NewScanAction({
       <Button icon={Plus} className={className} onClick={() => setOpen(true)}>
         {label}
       </Button>
-      {open ? <NewScanDialog repositories={repositories} onClose={() => setOpen(false)} /> : null}
+      {open ? <NewScanDialog targets={targets} onClose={() => setOpen(false)} /> : null}
     </>
   );
 }

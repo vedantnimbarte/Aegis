@@ -17,12 +17,20 @@ import {
   ShieldCheck,
   XCircle,
   FileWarning,
+  FileCheck,
+  FileJson,
   Loader2,
   AlertTriangle,
+  BadgeCheck,
+  Link as LinkIcon,
+  Network,
+  RefreshCw,
+  Share2,
+  Trash2,
   Wrench,
 } from "lucide-react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
 import { CodeBlock, Markdown } from "@/components/Markdown";
@@ -48,6 +56,8 @@ import {
   SEVERITY_ORDER,
 } from "@/lib/format";
 import type {
+  AttackChain,
+  Evidence,
   ProgressStep,
   TriageStatus,
   Scan,
@@ -56,10 +66,23 @@ import type {
   Vulnerability,
 } from "@/lib/types";
 
+/** Hands a fetched blob to the browser as a download. */
+function saveBlob(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 export default function ScanDetailPage() {
   const { id } = useParams<{ id: string }>();
   const queryClient = useQueryClient();
   const toast = useToast();
+  const [sharing, setSharing] = useState(false);
 
   const scanQuery = useQuery({
     queryKey: ["scan", id],
@@ -79,11 +102,15 @@ export default function ScanDetailPage() {
     enabled: isComplete,
   });
 
-  const reposQuery = useQuery({ queryKey: ["repos"], queryFn: api.listRepos });
-  const repoName = useMemo(() => {
-    const r = (reposQuery.data ?? []).find((r) => r.id === scan?.repository_id);
-    return r?.name;
-  }, [reposQuery.data, scan?.repository_id]);
+  const targetsQuery = useQuery({
+    queryKey: ["targets"],
+    queryFn: () => api.listTargets(),
+  });
+  const target = useMemo(
+    () => (targetsQuery.data ?? []).find((t) => t.id === scan?.target_id),
+    [targetsQuery.data, scan?.target_id]
+  );
+  const targetName = scan?.target_name ?? target?.name;
 
   const cancel = useMutation({
     mutationFn: () => api.cancelScan(id),
@@ -96,19 +123,17 @@ export default function ScanDetailPage() {
   });
 
   const download = useMutation({
-    mutationFn: () => api.getReportPdf(id),
-    onSuccess: (blob) => {
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `aegis-report-${id}.pdf`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
+    mutationFn: (variant: "plain" | "compliance" | "sarif") =>
+      variant === "sarif"
+        ? api.getReportSarif(id)
+        : api.getReportPdf(id, variant === "compliance"),
+    onSuccess: (blob, variant) => {
+      const extension = variant === "sarif" ? "sarif" : "pdf";
+      const prefix = variant === "compliance" ? "aegis-compliance-report" : "aegis-report";
+      saveBlob(blob, `${prefix}-${id}.${extension}`);
       toast.success("Report exported.");
     },
-    onError: (err) => toast.fromError(err, "Could not export the PDF. Please try again."),
+    onError: (err) => toast.fromError(err, "Could not export the report. Please try again."),
   });
 
   if (scanQuery.isLoading) return <ScanDetailSkeleton />;
@@ -132,18 +157,26 @@ export default function ScanDetailPage() {
           </span>
           <div>
             <h1 className="font-mono text-lg font-semibold text-fg">
-              {repoName ?? "Repository"}
+              {targetName ?? "Target"}
             </h1>
             <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[11px] text-faint">
-              <span className="capitalize">{scan.scan_mode} scan</span>
+              <span className="capitalize">
+                {scan.trigger === "retest" ? "verification retest" : `${scan.scan_mode} scan`}
+              </span>
               <span>·</span>
               <span>Started {formatDate(scan.started_at ?? scan.created_at)}</span>
               <span>·</span>
               <span>{formatDuration(scan.started_at, scan.completed_at)}</span>
+              {scan.engine_model ? (
+                <>
+                  <span>·</span>
+                  <span>{scan.engine_model}</span>
+                </>
+              ) : null}
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-2">
           {scan.status === "pending" || scan.status === "running" ? (
             <Button
               variant="secondary"
@@ -155,18 +188,47 @@ export default function ScanDetailPage() {
             </Button>
           ) : null}
           {scan.status === "completed" ? (
-            <Button
-              variant="secondary"
-              icon={Download}
-              loading={download.isPending}
-              onClick={() => download.mutate()}
-            >
-              Export PDF
-            </Button>
+            <>
+              <Button
+                variant="secondary"
+                icon={Download}
+                loading={download.isPending && download.variables === "plain"}
+                onClick={() => download.mutate("plain")}
+              >
+                PDF
+              </Button>
+              {/* The document an auditor accepts: scope, methodology, control
+                  mappings, limitations, and a signed attestation letter. */}
+              <Button
+                variant="secondary"
+                icon={FileCheck}
+                loading={download.isPending && download.variables === "compliance"}
+                onClick={() => download.mutate("compliance")}
+              >
+                Compliance pack
+              </Button>
+              <Button
+                variant="secondary"
+                icon={FileJson}
+                loading={download.isPending && download.variables === "sarif"}
+                onClick={() => download.mutate("sarif")}
+              >
+                SARIF
+              </Button>
+              <Button variant="secondary" icon={Share2} onClick={() => setSharing(true)}>
+                Share
+              </Button>
+            </>
           ) : null}
           <StatusBadge status={scan.status} />
         </div>
       </div>
+
+      {sharing ? <ShareDialog scanId={id} onClose={() => setSharing(false)} /> : null}
+
+      {/* A retest answers one question, so it says so plainly rather than
+          rendering as a scan that mysteriously found one thing or nothing. */}
+      {scan.trigger === "retest" ? <RetestVerdict scan={scan} /> : null}
 
       {scan.custom_instructions ? (
         <Card className="mb-6 px-4 py-3">
@@ -548,9 +610,18 @@ function Report({ report }: { report: ScanReport }) {
             </span>{" "}
             <span className="text-muted">still open</span>
           </span>
+          {report.verified_fixed_count > 0 ? (
+            <span className="text-[13px] text-fg">
+              <span className="font-display font-bold text-signal">
+                {report.verified_fixed_count}
+              </span>{" "}
+              <span className="text-muted">verified fixed</span>
+            </span>
+          ) : null}
         </Card>
       ) : null}
 
+      <AttackChains chains={report.attack_chains} />
       <AutofixCard report={report} />
 
       {/* Findings toolbar — sticks below the mobile top bar while scrolling a
@@ -720,6 +791,285 @@ function AutofixCard({ report }: { report: ScanReport }) {
 }
 
 /* -------------------------------------------------------------------------- */
+/** Findings that compose into an outcome none of them reaches alone.
+ *
+ *  This is the part of a manual engagement that scanners drop: two mediums
+ *  that chain into account takeover are one critical, and reading them as
+ *  separate rows is how a real risk gets deprioritized. */
+function AttackChains({ chains }: { chains: AttackChain[] }) {
+  if (!chains || chains.length === 0) return null;
+
+  return (
+    <Card className="mb-6 p-5">
+      <div className="mb-3 flex items-center gap-2">
+        <Network className="h-4 w-4 text-cyan-soft" strokeWidth={2} />
+        <h3 className="font-display text-[15px] font-semibold text-fg">Attack chains</h3>
+      </div>
+      <p className="mb-4 text-[13px] leading-relaxed text-muted">
+        Individually these findings are limited. Combined, each group below
+        reaches an outcome none of its parts reaches alone.
+      </p>
+      <ul className="space-y-3">
+        {chains.map((chain, i) => (
+          <li key={i} className="rounded-lg border border-line bg-ink px-4 py-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <SeverityBadge severity={chain.severity} />
+              <span className="font-display text-[14px] font-semibold text-fg">
+                {chain.title}
+              </span>
+            </div>
+            <p className="mt-2 text-[13px] leading-relaxed text-muted">{chain.narrative}</p>
+            {chain.steps.length > 0 ? (
+              <ol className="mt-2.5 space-y-1">
+                {chain.steps.map((step, j) => (
+                  <li key={j} className="flex gap-2 text-[12px] text-muted">
+                    <span className="font-mono text-faint">{j + 1}.</span>
+                    <span>{step}</span>
+                  </li>
+                ))}
+              </ol>
+            ) : null}
+          </li>
+        ))}
+      </ul>
+    </Card>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+const RETEST_COPY: Record<
+  string,
+  { title: string; body: string; tone: string; icon: typeof BadgeCheck }
+> = {
+  fixed: {
+    title: "Verified fixed",
+    body: "The original proof of concept was re-run against the target and no longer succeeds.",
+    tone: "border-signal/30 bg-signal/10 text-signal",
+    icon: BadgeCheck,
+  },
+  still_vulnerable: {
+    title: "Still vulnerable",
+    body: "The original proof of concept was re-run and still succeeds. The finding remains open.",
+    tone: "border-danger/30 bg-danger/10 text-danger",
+    icon: AlertTriangle,
+  },
+  inconclusive: {
+    title: "Retest inconclusive",
+    body: "The retest could not complete, so nothing was proven either way. The finding is unchanged.",
+    tone: "border-amber/30 bg-amber/10 text-amber",
+    icon: AlertTriangle,
+  },
+};
+
+/** The verdict banner on a retest scan.
+ *
+ *  "Inconclusive" is deliberately not folded into "fixed": a tool that reports
+ *  a vulnerability as remediated because it crashed before checking is worse
+ *  than one that reports nothing. */
+function RetestVerdict({ scan }: { scan: Scan }) {
+  const copy = scan.retest_outcome ? RETEST_COPY[scan.retest_outcome] : null;
+  if (!copy) {
+    return (
+      <Card className="mb-6 flex items-center gap-3 px-5 py-4">
+        <Loader2 className="h-4 w-4 animate-spin text-cyan-soft" strokeWidth={2} />
+        <p className="text-[13px] text-muted">
+          Re-running this finding&apos;s proof of concept…
+        </p>
+      </Card>
+    );
+  }
+  const Icon = copy.icon;
+  return (
+    <Card className={cn("mb-6 flex items-start gap-3 px-5 py-4", copy.tone)}>
+      <Icon className="mt-0.5 h-4 w-4 shrink-0" strokeWidth={2} />
+      <div>
+        <h3 className="font-display text-[14px] font-semibold">{copy.title}</h3>
+        <p className="mt-1 text-[13px] leading-relaxed opacity-90">{copy.body}</p>
+      </div>
+    </Card>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/** Expiring public links to this report.
+ *
+ *  For handing a report to a prospect's security reviewer or an auditor
+ *  without creating them an account. Proof-of-concept code is withheld by
+ *  default — a working exploit against production is not what they asked for. */
+function ShareDialog({ scanId, onClose }: { scanId: string; onClose: () => void }) {
+  const queryClient = useQueryClient();
+  const toast = useToast();
+  const [label, setLabel] = useState("");
+  const [days, setDays] = useState("14");
+  const [includePoc, setIncludePoc] = useState(false);
+  const [minted, setMinted] = useState<string | null>(null);
+
+  const sharesQuery = useQuery({
+    queryKey: ["shares", scanId],
+    queryFn: () => api.listShares(scanId),
+  });
+
+  const create = useMutation({
+    mutationFn: () =>
+      api.createShare(scanId, {
+        label: label.trim() || null,
+        expires_in_days: Number(days) || null,
+        include_poc: includePoc,
+      }),
+    onSuccess: (share) => {
+      setMinted(share.url);
+      setLabel("");
+      queryClient.invalidateQueries({ queryKey: ["shares", scanId] });
+      navigator.clipboard.writeText(share.url).catch(() => undefined);
+      toast.success("Share link created and copied.");
+    },
+    onError: (err) => toast.fromError(err, "Could not create the share link."),
+  });
+
+  const revoke = useMutation({
+    mutationFn: (shareId: string) => api.revokeShare(scanId, shareId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["shares", scanId] });
+      toast.success("Link revoked.");
+    },
+    onError: (err) => toast.fromError(err, "Could not revoke that link."),
+  });
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const shares = sharesQuery.data ?? [];
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-end justify-center bg-obsidian/70 p-4 backdrop-blur-sm sm:items-center"
+      onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+    >
+      <div
+        className="w-full max-w-lg overflow-hidden rounded-2xl border border-line bg-surface shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between border-b border-line px-5 py-4">
+          <div className="flex items-center gap-2.5">
+            <span className="grid h-8 w-8 place-items-center rounded-lg border border-cyan/40 bg-cyan/10 text-cyan-soft">
+              <Share2 className="h-4 w-4" strokeWidth={2} />
+            </span>
+            <h2 className="font-display text-[15px] font-semibold text-fg">Share this report</h2>
+          </div>
+          <button
+            onClick={onClose}
+            aria-label="Close"
+            className="grid h-8 w-8 place-items-center rounded-lg text-faint hover:bg-ink hover:text-fg"
+          >
+            <XCircle className="h-4 w-4" strokeWidth={2} />
+          </button>
+        </div>
+
+        <div className="space-y-4 px-5 py-5">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <label className="mb-1.5 block font-mono text-[11px] uppercase tracking-wide text-faint">
+                Who is it for
+              </label>
+              <input
+                value={label}
+                onChange={(e) => setLabel(e.target.value)}
+                placeholder="Acme security review"
+                className="w-full rounded-lg border border-line bg-ink px-3 py-2.5 text-[13px] text-fg placeholder:text-faint focus:border-cyan/60"
+              />
+            </div>
+            <div>
+              <label className="mb-1.5 block font-mono text-[11px] uppercase tracking-wide text-faint">
+                Expires in (days)
+              </label>
+              <input
+                value={days}
+                onChange={(e) => setDays(e.target.value)}
+                inputMode="numeric"
+                className="w-full rounded-lg border border-line bg-ink px-3 py-2.5 font-mono text-[13px] text-fg focus:border-cyan/60"
+              />
+            </div>
+          </div>
+
+          <label className="flex items-start gap-2.5 rounded-lg border border-line bg-ink px-3 py-2.5">
+            <input
+              type="checkbox"
+              checked={includePoc}
+              onChange={(e) => setIncludePoc(e.target.checked)}
+              className="mt-0.5 h-4 w-4 shrink-0 accent-cyan"
+            />
+            <span className="text-[12px] leading-relaxed text-muted">
+              Include proof-of-concept exploits and request transcripts. Off by
+              default — a reviewer needs to see that you tested and fixed, not a
+              working exploit against your production system.
+            </span>
+          </label>
+
+          {minted ? (
+            <div className="rounded-lg border border-signal/30 bg-signal/[0.07] px-3 py-2.5">
+              <p className="mb-1.5 font-mono text-[10px] uppercase tracking-wide text-signal">
+                Link created — copy it now
+              </p>
+              <p className="break-all font-mono text-[11px] text-fg">{minted}</p>
+            </div>
+          ) : null}
+
+          {shares.length > 0 ? (
+            <div>
+              <p className="mb-2 font-mono text-[10px] uppercase tracking-wide text-faint">
+                Active links
+              </p>
+              <ul className="space-y-1.5">
+                {shares.map((share) => (
+                  <li
+                    key={share.id}
+                    className="flex items-center gap-2 rounded-lg border border-line bg-ink px-3 py-2"
+                  >
+                    <LinkIcon className="h-3.5 w-3.5 shrink-0 text-faint" strokeWidth={2} />
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-[12px] text-fg">
+                        {share.label ?? "Untitled link"}
+                      </p>
+                      <p className="text-[11px] text-faint">
+                        Expires {formatDate(share.expires_at)} · {share.view_count}{" "}
+                        {share.view_count === 1 ? "view" : "views"}
+                        {share.include_poc ? " · includes PoC" : ""}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      aria-label="Revoke this link"
+                      onClick={() => revoke.mutate(share.id)}
+                      className="grid h-7 w-7 shrink-0 place-items-center rounded-md text-faint hover:bg-surface hover:text-danger"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" strokeWidth={2} />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+        </div>
+
+        <div className="flex items-center justify-end gap-2.5 border-t border-line px-5 py-4">
+          <Button variant="ghost" onClick={onClose}>
+            Done
+          </Button>
+          <Button icon={Share2} loading={create.isPending} onClick={() => create.mutate()}>
+            Create link
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
 const TRIAGE_CHOICES: { value: TriageStatus; label: string }[] = [
   { value: "open", label: "Open" },
   { value: "false_positive", label: "False positive" },
@@ -856,6 +1206,8 @@ function VulnerabilityCard({
             </Section>
           ) : null}
 
+          <EvidenceSection evidence={vuln.evidence} />
+
           {vuln.remediation ? (
             <Section title="Remediation" icon={ShieldCheck}>
               <Markdown text={vuln.remediation} />
@@ -863,7 +1215,7 @@ function VulnerabilityCard({
           ) : null}
 
           {/* Verdicts are stored against the finding's fingerprint, so they
-              carry forward to every future scan of this repository. */}
+              carry forward to every future scan of this target. */}
           <div className="border-t border-line pt-3.5">
             <p className="mb-2 font-mono text-[10px] uppercase tracking-wide text-faint">
               Triage
@@ -885,10 +1237,26 @@ function VulnerabilityCard({
                   {choice.label}
                 </button>
               ))}
+              <RetestAction vuln={vuln} scanId={scanId} />
               {triage.isPending ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin text-faint" strokeWidth={2} />
               ) : null}
             </div>
+            {vuln.retest_outcome ? (
+              <p
+                className={cn(
+                  "mt-2 text-[12px]",
+                  vuln.retest_outcome === "fixed" ? "text-signal" : "text-amber"
+                )}
+              >
+                {vuln.retest_outcome === "fixed"
+                  ? "Verified fixed — the original exploit was re-run and no longer succeeds"
+                  : vuln.retest_outcome === "still_vulnerable"
+                    ? "Retested — the exploit still succeeds"
+                    : "Retest did not complete; nothing was proven"}
+                {vuln.retested_at ? ` on ${formatDate(vuln.retested_at)}` : ""}.
+              </p>
+            ) : null}
             {!vuln.fingerprint ? (
               <p className="mt-2 text-[12px] text-faint">
                 This finding predates fingerprinting and cannot be triaged.
@@ -898,6 +1266,102 @@ function VulnerabilityCard({
         </div>
       </details>
     </Card>
+  );
+}
+
+/** What was actually observed, so the reader can check the claim themselves.
+ *
+ *  The most common complaint about AI pentesting is findings nobody can
+ *  reproduce. A description is an assertion; the transcript below is the
+ *  receipt — and the provenance line says what produced it and when. */
+function EvidenceSection({ evidence }: { evidence: Evidence | null }) {
+  if (!evidence) return null;
+
+  const provenance = [
+    evidence.target_url ? `Target ${evidence.target_url}` : null,
+    evidence.commit_sha ? `Commit ${evidence.commit_sha.slice(0, 12)}` : null,
+    evidence.model ? `Model ${evidence.model}` : null,
+    evidence.observed_at ? `Observed ${formatDate(evidence.observed_at)}` : null,
+  ].filter(Boolean) as string[];
+
+  const hasProof = evidence.request || evidence.response || evidence.poc_output;
+  if (!hasProof && provenance.length === 0) return null;
+
+  return (
+    <Section title="Evidence" icon={BadgeCheck}>
+      <div className="space-y-2.5">
+        {evidence.request ? (
+          <div>
+            <p className="mb-1 font-mono text-[10px] text-faint">Request</p>
+            <CodeBlock text={evidence.request} />
+          </div>
+        ) : null}
+        {evidence.response ? (
+          <div>
+            <p className="mb-1 font-mono text-[10px] text-faint">Response</p>
+            <CodeBlock text={evidence.response} />
+          </div>
+        ) : null}
+        {evidence.poc_output ? (
+          <div>
+            <p className="mb-1 font-mono text-[10px] text-faint">Exploit output</p>
+            <CodeBlock text={evidence.poc_output} />
+          </div>
+        ) : null}
+        {!hasProof ? (
+          <p className="text-[12px] text-faint">
+            No transcript was captured for this finding — only its provenance.
+          </p>
+        ) : null}
+        {provenance.length > 0 ? (
+          <p className="font-mono text-[11px] leading-relaxed text-faint">
+            {provenance.join(" · ")}
+          </p>
+        ) : null}
+      </div>
+    </Section>
+  );
+}
+
+/** Re-runs this finding's proof of concept to prove whether it still works. */
+function RetestAction({ vuln, scanId }: { vuln: Vulnerability; scanId: string }) {
+  const queryClient = useQueryClient();
+  const toast = useToast();
+  const router = useRouter();
+
+  const retest = useMutation({
+    mutationFn: () => api.retestFinding(scanId, vuln.id),
+    onSuccess: ({ scan_id }) => {
+      queryClient.invalidateQueries({ queryKey: ["scans"] });
+      toast.success("Retest started — re-running the original exploit.");
+      router.push(`/scans/${scan_id}`);
+    },
+    onError: (err) =>
+      toast.fromError(
+        err,
+        "Could not start the retest. The target may need a live URL."
+      ),
+  });
+
+  return (
+    <button
+      type="button"
+      disabled={retest.isPending || !vuln.fingerprint}
+      title="Re-run this finding's proof of concept against the live target"
+      onClick={() => retest.mutate()}
+      className={cn(
+        "inline-flex items-center gap-1.5 rounded-md border border-line bg-ink px-2.5 py-1",
+        "font-mono text-[11px] text-faint transition-colors",
+        "hover:border-cyan/40 hover:text-fg disabled:opacity-50"
+      )}
+    >
+      {retest.isPending ? (
+        <Loader2 className="h-3 w-3 animate-spin" strokeWidth={2} />
+      ) : (
+        <RefreshCw className="h-3 w-3" strokeWidth={2} />
+      )}
+      Verify fix
+    </button>
   );
 }
 
@@ -928,7 +1392,8 @@ function CopyLinkAction({ findingId }: { findingId: string }) {
   );
 }
 
-/** Opens — or links to — the GitHub issue tracking this finding.
+/** Opens — or links to — the issue tracking this finding, in whichever
+    tracker the organization has configured (GitHub, Jira, or Linear).
     `compact` is the icon-only form shown in the collapsed summary row, where
     there is no space for a label. */
 function IssueAction({
@@ -947,9 +1412,16 @@ function IssueAction({
   // button into a link and a second click can't open a duplicate.
   const issue = useMutation({
     mutationFn: () => api.createFindingIssue(scanId, vuln.id),
-    onSuccess: ({ created }) => {
+    onSuccess: ({ created, tracker, issue_key }) => {
       queryClient.invalidateQueries({ queryKey: ["report", scanId] });
-      toast.success(created ? "GitHub issue opened." : "This finding already has an issue.");
+      const where = tracker === "github" ? "GitHub" : tracker === "jira" ? "Jira" : "Linear";
+      toast.success(
+        created
+          ? issue_key
+            ? where + " issue " + issue_key + " opened."
+            : where + " issue opened."
+          : "This finding already has an issue."
+      );
     },
     onError: (err) => toast.fromError(err, "Could not create the issue."),
   });
@@ -960,7 +1432,7 @@ function IssueAction({
         href={vuln.github_issue_url}
         target="_blank"
         rel="noreferrer noopener"
-        title="View the GitHub issue for this finding"
+        title="View the issue tracking this finding"
         // Inside <summary>, a click that reaches the parent toggles the card.
         onClick={(e) => e.stopPropagation()}
         className={cn(CHIP, size, "text-muted")}
@@ -968,7 +1440,7 @@ function IssueAction({
         <Github className="h-3.5 w-3.5" strokeWidth={2} />
         {compact ? null : (
           <>
-            View GitHub issue
+            View {vuln.issue_key ?? "issue"}
             <ExternalLink className="h-3 w-3" strokeWidth={2} />
           </>
         )}
@@ -982,7 +1454,7 @@ function IssueAction({
       disabled={issue.isPending || !vuln.fingerprint}
       title={
         vuln.fingerprint
-          ? "Create a GitHub issue for this finding"
+          ? "File this finding in your issue tracker"
           : "This finding cannot be tracked — it has no fingerprint"
       }
       onClick={(e) => {
@@ -997,7 +1469,7 @@ function IssueAction({
       ) : (
         <Github className="h-3.5 w-3.5" strokeWidth={2} />
       )}
-      {compact ? null : "Create GitHub issue"}
+      {compact ? null : "File issue"}
     </button>
   );
 }

@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { GitBranch, Radar, ShieldAlert, Activity, Gauge } from "lucide-react";
+import { Activity, BadgeCheck, Crosshair, Gauge, Radar, ShieldAlert } from "lucide-react";
 import Link from "next/link";
 import { useMemo } from "react";
 
@@ -23,26 +23,29 @@ import type { DashboardSummary, Scan } from "@/lib/types";
 
 export default function OverviewPage() {
   // One aggregate, computed server-side from the latest completed scan of each
-  // repository. Summing every scan's report client-side used to count a
-  // vulnerability once per re-scan, so a repo scanned ten times reported its
+  // target. Summing every scan's report client-side used to count a
+  // vulnerability once per re-scan, so a target scanned ten times reported its
   // findings ten times over.
   const summaryQuery = useQuery({
     queryKey: ["dashboard", "summary"],
-    queryFn: api.dashboardSummary,
+    queryFn: () => api.dashboardSummary(),
   });
   const scansQuery = useQuery({ queryKey: ["scans"], queryFn: () => api.listScans() });
-  const reposQuery = useQuery({ queryKey: ["repos"], queryFn: api.listRepos });
+  const targetsQuery = useQuery({ queryKey: ["targets"], queryFn: () => api.listTargets() });
 
   const scans = scansQuery.data ?? [];
-  const repos = reposQuery.data ?? [];
-  const repoName = useMemo(() => new Map(repos.map((r) => [r.id, r.name])), [repos]);
+  const targets = targetsQuery.data ?? [];
+  const targetName = useMemo(
+    () => new Map(targets.map((t) => [t.id, t.name])),
+    [targets]
+  );
 
   return (
     <>
       <PageHeader
         title="Overview"
         subtitle="Your continuous testing at a glance."
-        action={<NewScanAction repositories={repos} />}
+        action={<NewScanAction targets={targets} />}
       />
 
       {summaryQuery.isLoading ? (
@@ -72,11 +75,11 @@ export default function OverviewPage() {
           <EmptyState
             icon={Activity}
             title="No scans yet"
-            action={<NewScanAction repositories={repos} label="Launch your first scan" />}
+            action={<NewScanAction targets={targets} label="Launch your first scan" />}
           >
-            {repos.length > 0
-              ? "Launch a pentest against one of your connected repositories."
-              : "Connect a GitHub repository first, then launch your first pentest."}
+            {targets.length > 0
+              ? "Launch a pentest against one of your targets."
+              : "Add a target first — a repository, a live app, an API, or an AI endpoint."}
           </EmptyState>
         ) : (
           <Card>
@@ -85,7 +88,7 @@ export default function OverviewPage() {
                 <RecentScanRow
                   key={scan.id}
                   scan={scan}
-                  repoName={repoName.get(scan.repository_id)}
+                  targetName={scan.target_name ?? targetName.get(scan.target_id)}
                 />
               ))}
             </ul>
@@ -120,31 +123,27 @@ function Metrics({ summary }: { summary: DashboardSummary }) {
           hint={band.label}
           accent={band.color}
         />
+        {/* Not "findings fixed" — findings whose original exploit was re-run
+            and no longer works. It is the only number here backed by proof. */}
         <Stat
-          icon={Radar}
-          label="Total scans"
-          value={summary.total_scans}
-          hint={
-            summary.running_scans > 0
-              ? `${summary.running_scans} in progress`
-              : summary.last_scan_at
-                ? `last ${relativeTime(summary.last_scan_at)}`
-                : "none yet"
-          }
-          href="/scans"
+          icon={BadgeCheck}
+          label="Verified fixed"
+          value={summary.verified_fixed}
+          hint={summary.verified_fixed > 0 ? "exploit re-run and failed" : "none verified yet"}
+          accent={summary.verified_fixed > 0 ? "#4ADE80" : undefined}
         />
         <Stat
-          icon={GitBranch}
-          label="Repositories"
-          value={summary.connected_repos}
-          hint={`${summary.scanned_repos} scanned`}
-          href="/repos"
+          icon={Crosshair}
+          label="Targets"
+          value={summary.connected_targets}
+          hint={`${summary.scanned_targets} scanned`}
+          href="/targets"
         />
       </div>
 
       {/* The composition behind "open findings" — and a plain statement of what
           is being counted, since the number is not a sum over scan history. */}
-      {summary.scanned_repos > 0 ? (
+      {summary.scanned_targets > 0 ? (
         <Card className="mt-3.5 space-y-2.5 px-5 py-4">
           <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1.5">
             <SeverityCountList
@@ -152,8 +151,8 @@ function Metrics({ summary }: { summary: DashboardSummary }) {
               emptyLabel="No open findings"
             />
             <p className="text-[11px] text-faint">
-              Latest scan of {summary.scanned_repos}{" "}
-              {summary.scanned_repos === 1 ? "repository" : "repositories"}
+              Latest scan of {summary.scanned_targets}{" "}
+              {summary.scanned_targets === 1 ? "target" : "targets"}
               {summary.suppressed_findings > 0
                 ? ` · ${summary.suppressed_findings} triaged away`
                 : ""}
@@ -162,6 +161,15 @@ function Metrics({ summary }: { summary: DashboardSummary }) {
           <SeverityBar counts={summary.counts_by_severity} />
         </Card>
       ) : null}
+
+      <div className="mt-3.5 flex justify-end">
+        <Link
+          href="/costs"
+          className="text-[12px] font-medium text-cyan-soft hover:text-cyan"
+        >
+          What did this cost? →
+        </Link>
+      </div>
     </>
   );
 }
@@ -211,7 +219,7 @@ function Stat({
   return <Card className="p-4">{body}</Card>;
 }
 
-function RecentScanRow({ scan, repoName }: { scan: Scan; repoName?: string }) {
+function RecentScanRow({ scan, targetName }: { scan: Scan; targetName?: string }) {
   return (
     <li>
       <Link
@@ -222,9 +230,12 @@ function RecentScanRow({ scan, repoName }: { scan: Scan; repoName?: string }) {
           <Radar className="h-4 w-4" strokeWidth={1.75} />
         </span>
         <div className="min-w-0 flex-1">
-          <p className="truncate font-mono text-[13px] text-fg">{repoName ?? "Unknown repo"}</p>
+          <p className="truncate font-mono text-[13px] text-fg">
+            {targetName ?? "Unknown target"}
+          </p>
           <p className="text-[11px] text-faint">
-            {scan.scan_mode} scan · {relativeTime(scan.created_at)}
+            {scan.trigger === "retest" ? "retest" : `${scan.scan_mode} scan`} ·{" "}
+            {relativeTime(scan.created_at)}
           </p>
         </div>
         {scan.counts_by_severity ? (

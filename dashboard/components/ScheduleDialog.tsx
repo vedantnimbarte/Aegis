@@ -1,6 +1,6 @@
 "use client";
 
-// Configure (or edit) recurring scans for a single repository: cadence, depth,
+// Configure (or edit) recurring scans for a single target: cadence, depth,
 // custom instructions, and an enabled toggle. Create or update in place; an
 // existing schedule can also be deleted.
 
@@ -9,7 +9,7 @@ import { CalendarClock, Trash2, X } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { api, ApiError } from "@/lib/api";
-import type { Repository, ScanFrequency, ScanMode, Schedule } from "@/lib/types";
+import type { Target, ScanFrequency, ScanMode, Schedule } from "@/lib/types";
 import { Button, ErrorState } from "./ui";
 
 const FREQUENCIES: { value: ScanFrequency; label: string }[] = [
@@ -25,11 +25,11 @@ const MODES: { value: ScanMode; label: string }[] = [
 ];
 
 export function ScheduleDialog({
-  repository,
+  target,
   existing,
   onClose,
 }: {
-  repository: Repository;
+  target: Target;
   existing: Schedule | null;
   onClose: () => void;
 }) {
@@ -52,7 +52,7 @@ export function ScheduleDialog({
             enabled,
           })
         : api.createSchedule({
-            repository_id: repository.id,
+            target_id: target.id,
             frequency,
             scan_mode: mode,
             custom_instructions: instructions.trim() || null,
@@ -106,7 +106,7 @@ export function ScheduleDialog({
               <h2 className="font-display text-[15px] font-semibold text-fg">
                 {existing ? "Edit schedule" : "Recurring scans"}
               </h2>
-              <p className="truncate font-mono text-[11px] text-faint">{repository.name}</p>
+              <p className="truncate font-mono text-[11px] text-faint">{target.name}</p>
             </div>
           </div>
           <button
