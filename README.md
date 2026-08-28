@@ -726,8 +726,8 @@ Alertmanager with your receiver, see the commented block in `prometheus.yml`.
 
 A second dashboard, **"Aegis Users & Platform"**, answers the product
 questions — registered accounts, who is active now, signups and daily actives
-over time, tier and subscription mix, activation rate, organizations, scan and
-finding volume, and LLM spend. It reads the application database directly
+over time, tier and subscription mix, activation rate, sign-ins and failed
+sign-ins, organizations, scan and finding volume, and LLM spend. It reads the application database directly
 through a provisioned `Aegis DB` datasource, so a new question is a SQL query
 rather than a new metric. Two things to know: `users.last_seen_at` (written at
 most once every five minutes per user) is what "active" means, since access

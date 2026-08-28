@@ -21,12 +21,15 @@ datasources:
     type: postgres
     url: db:5432
     user: aegis
-    database: aegis
     isDefault: false
     editable: true
     secureJsonData:
       password: $POSTGRES_PASSWORD
     jsonData:
+      # Grafana 11+ reads the database name from jsonData; the top-level
+      # `database:` key is ignored, and panels fail with "you do not currently
+      # have a default database configured for this data source".
+      database: aegis
       sslmode: disable
       postgresVersion: 1600
       timescaledb: false

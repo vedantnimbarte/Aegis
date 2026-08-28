@@ -23,6 +23,7 @@ from app.schemas.auth import (
     VerifyEmailRequest,
 )
 from app.schemas.token import Token
+from app.services import audit_service
 from app.services import email as email_service
 from app.services import github as github_service
 from app.services import user_service
@@ -34,6 +35,37 @@ def _issue_tokens(user_id) -> Token:
     return Token(
         access_token=security.create_access_token(user_id),
         refresh_token=security.create_refresh_token(user_id),
+    )
+
+
+def _client_ip(request: Request):
+    """Best-effort caller address for the audit log.
+
+    X-Forwarded-For is client-supplied unless a proxy you trust overwrites it,
+    so treat this as a hint for spotting patterns, never as identity.
+    """
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",")[0].strip()[:45]
+    return request.client.host if request.client else None
+
+
+def _record_auth(
+    db: Session,
+    request: Request,
+    action: str,
+    *,
+    user: User = None,
+    email: str = None,
+    **detail,
+) -> None:
+    """Append a sign-in event. Account-level, so it carries no organization."""
+    audit_service.record(
+        db,
+        action=action,
+        actor=user,
+        actor_email=email,
+        detail={"ip": _client_ip(request), **detail},
     )
 
 
@@ -68,6 +100,7 @@ def register(
             detail="An account with this email already exists",
         )
     _dispatch_verification_email(background_tasks, user)
+    _record_auth(db, request, audit_service.AUTH_REGISTERED, user=user, method="password")
     return _issue_tokens(user.id)
 
 
@@ -115,9 +148,21 @@ def login(
         db, email=payload.email, password=payload.password
     )
     if user is None or not user.is_active:
+        # The response stays deliberately vague (no account enumeration); the
+        # log does not have to be — a burst of these against one address, or
+        # from one IP, is what a takeover attempt looks like.
+        _record_auth(
+            db,
+            request,
+            audit_service.AUTH_LOGIN_FAILED,
+            user=user,
+            email=payload.email,
+            reason="inactive" if user is not None else "bad_credentials",
+        )
         raise HTTPException(
             status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password"
         )
+    _record_auth(db, request, audit_service.AUTH_LOGIN, user=user, method="password")
     return _issue_tokens(user.id)
 
 
@@ -153,6 +198,7 @@ def github_oauth(
         github_token=gh_token,
     )
 
+    _record_auth(db, request, audit_service.AUTH_LOGIN, user=user, method="github")
     return _issue_tokens(user.id)
 
 
@@ -210,6 +256,8 @@ def reset_password(
         raise invalid
 
     user_service.set_password(db, user, payload.new_password)
+    # A credential change nobody signed in to make: worth its own line.
+    _record_auth(db, request, audit_service.AUTH_PASSWORD_RESET, user=user)
     return _issue_tokens(user.id)
 
 
