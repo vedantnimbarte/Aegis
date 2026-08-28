@@ -79,6 +79,14 @@ class User(UUIDMixin, TimestampMixin, Base):
 
     is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
 
+    # Last authenticated request, refreshed at most every few minutes (see
+    # app.api.deps). Access tokens are stateless, so there is no session to
+    # count — recent activity is the closest thing to "signed in right now",
+    # and it is what the Grafana users dashboard reads.
+    last_seen_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
     # When the user accepted the scan-authorization terms (attesting they own
     # or are permitted to test their targets). NULL until accepted; scanning is
     # gated on it. See SECURITY.md.

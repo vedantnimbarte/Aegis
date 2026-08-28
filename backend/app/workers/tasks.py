@@ -85,6 +85,9 @@ def run_strix_scan(self, scan_id: str) -> dict:
     """Run a Strix pentest for the given scan and ingest its findings."""
     db = SessionLocal()
     workdir = Path(settings.STRIX_WORK_DIR) / scan_id
+    # Bound before the try so the finally can record usage no matter how early
+    # the run fell over.
+    model: Optional[str] = None
     try:
         scan = db.get(Scan, uuid.UUID(scan_id))
         if scan is None:
@@ -118,7 +121,6 @@ def run_strix_scan(self, scan_id: str) -> dict:
 
         findings = strix_report.parse_report(run_dir)
         _persist_findings(db, scan, target, findings, plan.commit_sha, model)
-        _record_usage(db, scan, workdir, model)
         _mark_completed(db, scan)
 
         if scan.is_retest:
@@ -160,6 +162,9 @@ def run_strix_scan(self, scan_id: str) -> dict:
         _notify(db, scan_id, ScanStatus.FAILED.value)
         return {"scan_id": scan_id, "status": ScanStatus.FAILED.value}
     finally:
+        # Must come before the rmtree: the spend is read out of the run state
+        # that this line deletes.
+        _record_usage(db, scan_id, workdir, model)
         shutil.rmtree(workdir, ignore_errors=True)
         db.close()
 
@@ -656,23 +661,35 @@ def _mark_retest_inconclusive(db, scan_id: str) -> None:
         db.rollback()
 
 
-def _record_usage(db, scan: Scan, workdir: Path, model: Optional[str]) -> None:
+def _record_usage(db, scan_id: str, workdir: Path, model: Optional[str]) -> None:
     """Persist the run's LLM spend before the working directory is deleted.
 
-    Best-effort: usage reporting must never turn a completed scan into a
-    failed one, so any problem reading the run state is swallowed.
-    """
-    scan.engine_model = model
-    try:
-        usage = scan_progress.read_progress(workdir)
-    except Exception:  # noqa: BLE001 - accounting is not worth failing a scan
-        logger.warning("Could not read LLM usage for scan %s", scan.id, exc_info=True)
-        return
+    Called from the task's ``finally``, so it covers every way a scan can end.
+    A run that burned tokens and *then* failed still cost real money, and spend
+    that is never recorded never shows up against the revenue it was meant to
+    earn — the failures are exactly the scans worth counting.
 
-    scan.cost_usd = usage.cost_usd
-    scan.llm_requests = usage.llm_requests or None
-    scan.input_tokens = usage.input_tokens or None
-    scan.output_tokens = usage.output_tokens or None
+    Best-effort throughout: it re-fetches on a clean session (the failure paths
+    arrive with a poisoned one), and swallows its own errors so accounting can
+    neither fail a completed scan nor mask the error that ended a failed one.
+    A run that never reached Strix has no usage to read, and leaves the columns
+    NULL rather than writing a zero that would read as "cost us nothing".
+    """
+    try:
+        db.rollback()
+        scan = db.get(Scan, uuid.UUID(scan_id))
+        if scan is None:
+            return
+        scan.engine_model = model
+        usage = scan_progress.read_progress(workdir)
+        scan.cost_usd = usage.cost_usd
+        scan.llm_requests = usage.llm_requests or None
+        scan.input_tokens = usage.input_tokens or None
+        scan.output_tokens = usage.output_tokens or None
+        db.commit()
+    except Exception:  # noqa: BLE001 - accounting is not worth failing a scan
+        logger.warning("Could not record LLM usage for scan %s", scan_id, exc_info=True)
+        db.rollback()
 
 
 def _fail(db, scan_id: str, message: str) -> None:

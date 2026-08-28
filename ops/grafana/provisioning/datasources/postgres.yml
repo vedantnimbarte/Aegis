@@ -1,0 +1,35 @@
+# The application database, read directly by the "Aegis Users & Platform"
+# dashboard. Product questions ("how many accounts, who is active, which tier")
+# are answered by SQL against the live rows, not by an exporter — nothing has
+# to be instrumented in the app for a new question to be askable.
+#
+# The password comes from the environment (see the grafana service in
+# docker-compose.yml); it is never written into this file.
+#
+# For anything beyond local: point this at a SELECT-only role, because a
+# Grafana admin can run arbitrary SQL through this datasource.
+#   CREATE ROLE grafana_ro LOGIN PASSWORD '…';
+#   GRANT CONNECT ON DATABASE aegis TO grafana_ro;
+#   GRANT USAGE ON SCHEMA public TO grafana_ro;
+#   GRANT SELECT ON ALL TABLES IN SCHEMA public TO grafana_ro;
+#   ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO grafana_ro;
+apiVersion: 1
+
+datasources:
+  - name: Aegis DB
+    uid: aegisdb
+    type: postgres
+    url: db:5432
+    user: aegis
+    isDefault: false
+    editable: true
+    secureJsonData:
+      password: $POSTGRES_PASSWORD
+    jsonData:
+      # Grafana 11+ reads the database name from jsonData; the top-level
+      # `database:` key is ignored, and panels fail with "you do not currently
+      # have a default database configured for this data source".
+      database: aegis
+      sslmode: disable
+      postgresVersion: 1600
+      timescaledb: false

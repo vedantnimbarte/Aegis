@@ -8,5 +8,8 @@ providers:
     type: file
     disableDeletion: false
     editable: true
+    # Re-read the JSON files this often, so an edit shows up without a restart.
+    # A changed dashboard is only applied if its `version` also increased.
+    updateIntervalSeconds: 10
     options:
       path: /var/lib/grafana/dashboards

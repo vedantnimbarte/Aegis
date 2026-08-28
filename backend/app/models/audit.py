@@ -32,11 +32,15 @@ class AuditEvent(UUIDMixin, TimestampMixin, Base):
         Index("ix_audit_org_created", "organization_id", "created_at"),
     )
 
-    organization_id: Mapped[uuid.UUID] = mapped_column(
+    # NULL for account-level events that belong to no organization: signing in
+    # is not something you do *to* an org, and a failed sign-in may not even
+    # resolve to a user. Org history queries filter on this column, so those
+    # events simply never appear in an org's log.
+    organization_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("organizations.id", ondelete="CASCADE"),
         index=True,
-        nullable=False,
+        nullable=True,
     )
     # NULL when the platform itself acted (scheduler, webhook, retest worker).
     actor_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(

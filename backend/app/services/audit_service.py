@@ -48,13 +48,21 @@ PROFILE_UPDATED = "profile.updated"
 PASSWORD_CHANGED = "profile.password_changed"
 ORG_CREATED = "org.created"
 
+# Account-level actions. These carry no organization: you sign in to the
+# platform, not to an org, and a rejected attempt may not name a real account.
+AUTH_REGISTERED = "auth.registered"
+AUTH_LOGIN = "auth.login"
+AUTH_LOGIN_FAILED = "auth.login_failed"
+AUTH_PASSWORD_RESET = "auth.password_reset"
+
 
 def record(
     db: Session,
     *,
-    organization_id: uuid.UUID,
+    organization_id: Optional[uuid.UUID] = None,
     action: str,
     actor: Optional[User] = None,
+    actor_email: Optional[str] = None,
     subject_type: Optional[str] = None,
     subject_id: Optional[Any] = None,
     detail: Optional[dict] = None,
@@ -63,12 +71,16 @@ def record(
 
     The caller's transaction is left alone: this commits only the event, so an
     audited action that later rolls back still leaves the attempt on record.
+
+    ``actor_email`` records who *claimed* to act when there is no user to point
+    at — a sign-in attempt against an address with no account still belongs in
+    the log, and is the whole point of one.
     """
     try:
         event = AuditEvent(
             organization_id=organization_id,
             actor_user_id=actor.id if actor is not None else None,
-            actor_email=actor.email if actor is not None else None,
+            actor_email=actor.email if actor is not None else actor_email,
             action=action,
             subject_type=subject_type,
             subject_id=str(subject_id) if subject_id is not None else None,

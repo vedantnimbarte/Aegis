@@ -75,6 +75,11 @@ services:
         INSTALL_STRIX: "true"
     # `-E` emits task events for the Prometheus celery-exporter.
     command: celery -A app.workers.celery_app.celery worker --loglevel=info -E
+    # A runaway scan should die alone, not take the host down with it. Sized
+    # for a ~8 GB dev machine (idle worker sits near 0.5 GB) — raise both this
+    # and dind's on a bigger box. The Grafana "System resources" row plots
+    # working set against these limits.
+    mem_limit: 1500m
     env_file: ./backend/.env
     environment:
       <<: *service-hosts
@@ -112,6 +117,10 @@ services:
   dind:
     image: docker:27-dind
     privileged: true
+    # Caps the whole sandbox fleet: every container Strix spawns is a child of
+    # this daemon and counts against this limit, so a target that balloons
+    # memory is contained here rather than on the host.
+    mem_limit: 2500m
     environment:
       DOCKER_TLS_CERTDIR: ""   # plain TCP on the internal network only
     volumes:
@@ -169,11 +178,43 @@ services:
     depends_on:
       - redis
 
+  # Per-container CPU / memory / network / disk for every service in the stack,
+  # including the short-lived sandbox containers a scan spawns on dind.
+  cadvisor:
+    # v0.55+ required: older builds resolve a container's read-write layer via
+    # /var/lib/docker/image/*/layerdb, which Docker 25+ and Docker Desktop no
+    # longer write (containerd image store). On those, every container handler
+    # fails to register and you get no per-container series at all.
+    image: gcr.io/cadvisor/cadvisor:v0.55.1
+    privileged: true
+    command:
+      - "--docker_only=true"
+      - "--housekeeping_interval=10s"
+      # Compose stamps config hashes and bind paths onto every container as
+      # labels; copying them onto every metric is a cardinality bomb.
+      - "--store_container_labels=false"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+
+  # Connection saturation, transaction rate, DB size — the numbers that explain
+  # an API slowdown that isn't the API's fault.
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:latest
+    environment:
+      DATA_SOURCE_NAME: postgresql://aegis:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/aegis?sslmode=disable
+    depends_on:
+      db:
+        condition: service_healthy
+
   prometheus:
     image: prom/prometheus:latest
     command: ["--config.file=/etc/prometheus/prometheus.yml"]
     volumes:
       - ./ops/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./ops/prometheus/rules.yml:/etc/prometheus/rules.yml:ro
       - promdata:/prometheus
     ports:
       - "9090:9090"
@@ -187,6 +228,9 @@ services:
       # Dev-only default admin creds — change for any shared deployment.
       GF_SECURITY_ADMIN_PASSWORD: admin
       GF_USERS_ALLOW_SIGN_UP: "false"
+      # Read by the provisioned "Aegis DB" datasource, which the users
+      # dashboard queries with SQL.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
     volumes:
       - ./ops/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./ops/grafana/dashboards:/var/lib/grafana/dashboards:ro

@@ -9,11 +9,13 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError
+from sqlalchemy import update
 from sqlalchemy.orm import Session
 
 from app.core import security
@@ -74,7 +76,30 @@ def get_current_user(
     user = user_service.get_user_by_id(db, subject)
     if user is None:
         raise _CREDENTIALS_EXCEPTION
+    _touch_last_seen(db, user)
     return user
+
+
+# Every authenticated request passes through here, so the write is throttled:
+# knowing someone was seen within the last few minutes is all any "active
+# users" figure needs, and a write per request would be pure waste.
+_LAST_SEEN_INTERVAL = timedelta(minutes=5)
+
+
+def _touch_last_seen(db: Session, user: User) -> None:
+    """Record that this user is currently around."""
+    now = datetime.now(timezone.utc)
+    if user.last_seen_at is not None and now - user.last_seen_at < _LAST_SEEN_INTERVAL:
+        return
+    db.execute(
+        update(User)
+        .where(User.id == user.id)
+        # Assigning updated_at to itself suppresses the column's onupdate:
+        # being seen is not a change to the profile.
+        .values(last_seen_at=now, updated_at=User.updated_at)
+    )
+    db.commit()
+    user.last_seen_at = now
 
 
 def get_current_active_user(
