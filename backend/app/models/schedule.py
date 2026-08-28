@@ -1,4 +1,4 @@
-"""Schedule model — a recurring scan configuration for a repository."""
+"""Schedule model — a recurring scan configuration for a target."""
 from __future__ import annotations
 
 import uuid
@@ -13,19 +13,19 @@ from app.db.base_class import Base, TimestampMixin, UUIDMixin, str_enum
 from app.models.enums import ScanFrequency, ScanMode
 
 if TYPE_CHECKING:
-    from app.models.repository import Repository
+    from app.models.target import Target
 
 
 class Schedule(UUIDMixin, TimestampMixin, Base):
     __tablename__ = "schedules"
     __table_args__ = (
-        # At most one recurring schedule per repository.
-        UniqueConstraint("repository_id", name="uq_schedule_repository"),
+        # At most one recurring schedule per target.
+        UniqueConstraint("target_id", name="uq_schedule_target"),
     )
 
-    repository_id: Mapped[uuid.UUID] = mapped_column(
+    target_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("repositories.id", ondelete="CASCADE"),
+        ForeignKey("targets.id", ondelete="CASCADE"),
         index=True,
         nullable=False,
     )
@@ -56,7 +56,7 @@ class Schedule(UUIDMixin, TimestampMixin, Base):
     )
 
     # Relationships -------------------------------------------------------
-    repository: Mapped["Repository"] = relationship(back_populates="schedule")
+    target: Mapped["Target"] = relationship(back_populates="schedule")
 
     def __repr__(self) -> str:  # pragma: no cover
-        return f"<Schedule id={self.id} repo={self.repository_id} freq={self.frequency.value}>"
+        return f"<Schedule id={self.id} target={self.target_id} freq={self.frequency.value}>"

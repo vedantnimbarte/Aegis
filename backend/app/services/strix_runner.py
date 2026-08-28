@@ -38,17 +38,23 @@ class StrixError(Exception):
 
 def run_strix(
     *,
-    target_dir: Path,
     scan_mode: str,
     workdir: Path,
+    target_dir: Optional[Path] = None,
     instruction: Optional[str] = None,
     instruction_file: Optional[Path] = None,
     extra_targets: Optional[list[str]] = None,
     timeout: Optional[int] = None,
     llm_model: Optional[str] = None,
     llm_api_key: Optional[str] = None,
+    max_budget_usd: Optional[float] = None,
 ) -> Path:
-    """Run a Strix scan against ``target_dir`` and return its run directory.
+    """Run a Strix scan and return its run directory.
+
+    ``target_dir`` is a source checkout; it is optional because half the
+    targets Aegis tests have no repository at all — a live web app, an API, an
+    LLM endpoint or an MCP server is addressed entirely by URL. At least one
+    of ``target_dir`` or ``extra_targets`` must be given.
 
     ``extra_targets`` adds further ``--target`` values (e.g. a live app URL for
     grey-box testing). ``instruction_file`` (mutually exclusive with
@@ -56,12 +62,15 @@ def run_strix(
     on the command line.
 
     ``llm_model``/``llm_api_key`` override the platform LLM (BYOK); either or
-    both fall back to the shared config when blank.
+    both fall back to the shared config when blank. ``max_budget_usd``
+    overrides the platform per-scan spend cap for one target.
 
     ``workdir`` is used as the process cwd; Strix creates ``strix_runs/`` under
     it, so a fresh per-scan ``workdir`` yields exactly one run directory to
     locate afterwards.
     """
+    if target_dir is None and not (extra_targets or []):
+        raise StrixError("A scan needs at least one target (a checkout or a URL)")
     model = llm_model or settings.STRIX_LLM
     api_key = llm_api_key or settings.strix_llm_api_key
     if not api_key:
@@ -77,6 +86,7 @@ def run_strix(
         instruction=instruction,
         instruction_file=instruction_file,
         extra_targets=extra_targets,
+        max_budget_usd=max_budget_usd,
     )
     env = _build_env(model, api_key)
 
@@ -109,13 +119,16 @@ def run_strix(
 
 def _build_command(
     *,
-    target_dir: Path,
     scan_mode: str,
-    instruction: Optional[str],
+    target_dir: Optional[Path] = None,
+    instruction: Optional[str] = None,
     instruction_file: Optional[Path] = None,
     extra_targets: Optional[list[str]] = None,
+    max_budget_usd: Optional[float] = None,
 ) -> list[str]:
-    cmd = [settings.STRIX_BIN, "--non-interactive", "--target", str(target_dir)]
+    cmd = [settings.STRIX_BIN, "--non-interactive"]
+    if target_dir is not None:
+        cmd += ["--target", str(target_dir)]
     for extra in extra_targets or []:
         if extra and extra.strip():
             cmd += ["--target", extra.strip()]
@@ -128,8 +141,11 @@ def _build_command(
     elif instruction and instruction.strip():
         cmd += ["--instruction", instruction.strip()]
 
-    if settings.STRIX_MAX_BUDGET_USD:
-        cmd += ["--max-budget-usd", str(settings.STRIX_MAX_BUDGET_USD)]
+    # A per-target cap overrides the platform default, so one expensive
+    # monorepo can be bounded without lowering the ceiling everywhere.
+    budget = max_budget_usd if max_budget_usd else settings.STRIX_MAX_BUDGET_USD
+    if budget:
+        cmd += ["--max-budget-usd", str(budget)]
     return cmd
 
 

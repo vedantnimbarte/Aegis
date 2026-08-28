@@ -27,6 +27,11 @@ _hard_time_limit = _soft_time_limit + 300
 # How often Celery Beat checks for due recurring scans (see workers/tasks.py).
 _SCHEDULER_TICK_SECONDS = 300.0
 
+# Attack-surface discovery ticks hourly; each target is only swept once per
+# ASM_INTERVAL_HOURS, so the tick just decides who is due rather than doing the
+# work every time.
+_DISCOVERY_TICK_SECONDS = 3600.0
+
 celery.conf.update(
     task_track_started=True,
     task_serializer="json",
@@ -47,6 +52,10 @@ celery.conf.update(
         "dispatch-due-scheduled-scans": {
             "task": "app.workers.tasks.enqueue_due_scheduled_scans",
             "schedule": _SCHEDULER_TICK_SECONDS,
+        },
+        "discover-attack-surface": {
+            "task": "app.workers.tasks.run_asset_discovery",
+            "schedule": _DISCOVERY_TICK_SECONDS,
         },
     },
 )

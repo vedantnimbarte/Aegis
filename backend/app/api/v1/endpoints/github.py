@@ -9,10 +9,9 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 from app.api import deps
+from app.api.deps import Principal
 from app.db.session import get_db
-from app.models.enums import ScanMode, ScanTrigger
-from app.models.repository import Repository
-from app.models.user import User
+from app.models.enums import GitProvider, ScanMode, ScanTrigger, TargetKind
 from app.schemas.github import (
     GitHubAppInfo,
     InstallationClaimRequest,
@@ -22,8 +21,9 @@ from app.services import (
     billing,
     github_app,
     installation_service,
-    repo_service,
+    org_service,
     scan_service,
+    target_service,
 )
 
 logger = logging.getLogger("aegis.github")
@@ -38,14 +38,16 @@ _PR_ACTIONS = {"opened", "synchronize", "reopened"}
 # --- Installation management ---------------------------------------------
 @router.get("/app", response_model=GitHubAppInfo)
 def github_app_info(
-    current_user: User = Depends(deps.get_current_active_user),
+    principal: Principal = Depends(deps.require_viewer),
     db: Session = Depends(get_db),
 ) -> GitHubAppInfo:
-    """App configuration + the current user's linked installations."""
+    """App configuration + the organization's linked installations."""
     return GitHubAppInfo(
         configured=github_app.is_configured(),
         install_url=github_app.install_url(),
-        installations=installation_service.list_installations(db, current_user),
+        installations=installation_service.list_installations(
+            db, principal.organization
+        ),
     )
 
 
@@ -54,22 +56,31 @@ def github_app_info(
 )
 def claim_installation(
     payload: InstallationClaimRequest,
-    current_user: User = Depends(deps.get_current_active_user),
+    principal: Principal = Depends(deps.require_admin),
     db: Session = Depends(get_db),
 ) -> InstallationRead:
-    """Link a GitHub App installation to the signed-in user (post-install)."""
+    """Link a GitHub App installation to the organization (post-install).
+
+    Admin-only, and the installation belongs to the organization rather than
+    the person who clicked: pull-request scanning must keep working after they
+    leave.
+    """
     try:
         account_login = github_app.get_installation_account(payload.installation_id)
     except github_app.GitHubAppError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc))
 
     installation, error = installation_service.claim_installation(
-        db, current_user, payload.installation_id, account_login
+        db,
+        principal.organization,
+        payload.installation_id,
+        account_login,
+        claimed_by=principal.user,
     )
     if error == "taken":
         raise HTTPException(
             status.HTTP_409_CONFLICT,
-            detail="This installation is already linked to another account",
+            detail="This installation is already linked to another organization",
         )
     return installation
 
@@ -77,11 +88,13 @@ def claim_installation(
 @router.delete("/installations/{record_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_installation(
     record_id: uuid.UUID,
-    current_user: User = Depends(deps.get_current_active_user),
+    principal: Principal = Depends(deps.require_admin),
     db: Session = Depends(get_db),
 ):
-    """Unlink a GitHub App installation from the account."""
-    installation = installation_service.get_installation(db, record_id, current_user)
+    """Unlink a GitHub App installation from the organization."""
+    installation = installation_service.get_installation(
+        db, record_id, principal.organization
+    )
     if installation is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Installation not found")
     installation_service.delete_installation(db, installation)
@@ -121,8 +134,9 @@ def _process_pull_request(db: Session, payload: dict) -> None:
     installation_id = str((payload.get("installation") or {}).get("id") or "")
     installation = installation_service.get_by_installation_id(db, installation_id)
     if installation is None:
-        return  # installation not linked to any Aegis account
-    user = installation.user
+        return  # installation not linked to any Aegis organization
+    org = installation.organization
+    payer = org_service.billing_user(db, org)
 
     repo_info = payload.get("repository") or {}
     gh_repo_id = str(repo_info.get("id") or "")
@@ -136,29 +150,38 @@ def _process_pull_request(db: Session, payload: dict) -> None:
         return
 
     # Find or auto-connect the repository (a PR install implies intent to scan).
-    repo = repo_service.get_by_github_id(db, user, gh_repo_id)
-    if repo is None:
-        repo = Repository(
-            user_id=user.id, github_repo_id=gh_repo_id, name=full_name, url=html_url
+    target = target_service.get_by_external_repo(
+        db, org, GitProvider.GITHUB, gh_repo_id
+    )
+    if target is None:
+        target = target_service.create_target(
+            db,
+            org=org,
+            creator=None,
+            kind=TargetKind.REPO,
+            values={
+                "provider": GitProvider.GITHUB,
+                "external_repo_id": gh_repo_id,
+                "name": full_name,
+                "clone_url": html_url,
+            },
         )
-        db.add(repo)
-        db.commit()
-        db.refresh(repo)
 
     # Respect the same gates as manual scans; skip (don't error) if unentitled.
-    if not user.email_verified:
-        logger.info("Skipping PR scan for %s: email unverified", full_name)
+    if not payer.email_verified or not payer.has_accepted_scan_terms:
+        logger.info("Skipping PR scan for %s: owner not cleared to scan", full_name)
         return
     try:
-        billing.assert_can_create_scan(db, user)
+        billing.assert_can_create_scan(db, org, scan_mode=_PR_SCAN_MODE)
     except billing.PaymentRequiredError as exc:
         logger.info("Skipping PR scan for %s: %s", full_name, exc.reason)
         return
 
     scan_service.create_scan(
         db,
-        user=user,
-        repository_id=repo.id,
+        org=org,
+        actor=None,
+        target_id=target.id,
         scan_mode=_PR_SCAN_MODE,
         trigger=ScanTrigger.PULL_REQUEST,
         github_installation_id=installation_id,

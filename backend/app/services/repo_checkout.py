@@ -2,8 +2,12 @@
 
 Clones the repo (shallow, single-branch) into a local directory that is then
 handed to Strix as ``--target``. Private repos are cloned over HTTPS using the
-user's GitHub token; the token is injected into the clone URL only and is
+user's host credential; the token is injected into the clone URL only and is
 scrubbed from any error text so it can never reach logs or the database.
+
+Each host wants a different username beside the token in the URL
+(``x-access-token`` for GitHub, ``oauth2`` for GitLab, ``x-token-auth`` for
+Bitbucket), so callers pass the one their provider expects.
 """
 from __future__ import annotations
 
@@ -25,6 +29,7 @@ def clone_repository(
     dest: Path,
     *,
     github_token: Optional[str] = None,
+    token_username: str = "x-access-token",
     ref: Optional[str] = None,
     timeout: Optional[int] = None,
 ) -> Path:
@@ -36,7 +41,7 @@ def clone_repository(
     scrubbed from the message.
     """
     dest.parent.mkdir(parents=True, exist_ok=True)
-    clone_url = _authenticated_url(repo_url, github_token)
+    clone_url = _authenticated_url(repo_url, github_token, token_username)
     limit = timeout or settings.GIT_CLONE_TIMEOUT_SECONDS
 
     if ref:
@@ -77,11 +82,13 @@ def _git(args: list[str], token: Optional[str], timeout: int) -> None:
         raise CheckoutError(f"git {args[0]} failed: {detail}")
 
 
-def _authenticated_url(repo_url: str, token: Optional[str]) -> str:
+def _authenticated_url(
+    repo_url: str, token: Optional[str], username: str = "x-access-token"
+) -> str:
     """Return an HTTPS clone URL with the token embedded, when applicable.
 
     Only HTTPS URLs are rewritten; SSH/other schemes are returned unchanged.
-    Uses the ``x-access-token:<token>`` form GitHub expects for OAuth tokens.
+    ``username`` is the host-specific half of the credential pair.
     """
     if not token:
         return repo_url
@@ -94,7 +101,7 @@ def _authenticated_url(repo_url: str, token: Optional[str]) -> str:
     host = parsed.hostname or ""
     if parsed.port:
         host = f"{host}:{parsed.port}"
-    netloc = f"x-access-token:{token}@{host}"
+    netloc = f"{username}:{token}@{host}"
     return urlunparse(parsed._replace(netloc=netloc))
 
 

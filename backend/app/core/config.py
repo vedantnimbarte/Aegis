@@ -86,6 +86,8 @@ class Settings(BaseSettings):
     # Enterprise is sales-led and has no self-serve price.
     STRIPE_PRICE_STARTER: str = ""
     STRIPE_PRICE_PRO: str = ""
+    # One-time price for the audit-ready compliance pentest report.
+    STRIPE_PRICE_COMPLIANCE_REPORT: str = ""
     # Where Stripe Checkout / the billing portal return the user. Points at the
     # dashboard app (see ../dashboard). No trailing slash.
     DASHBOARD_URL: str = "http://localhost:3001"
@@ -120,6 +122,40 @@ class Settings(BaseSettings):
     STRIX_REASONING_EFFORT: str = ""
     # Timeout for the `git clone` of the target repo (seconds).
     GIT_CLONE_TIMEOUT_SECONDS: int = 300
+
+    # --- Compliance reporting --------------------------------------------
+    # Printed on the attestation letter. The signer is a real person at the
+    # vendor; an unsigned letter is not what an auditor asked for.
+    COMPLIANCE_ATTESTOR_NAME: str = ""
+    COMPLIANCE_ATTESTOR_TITLE: str = "Head of Security"
+    COMPLIANCE_VENDOR_NAME: str = "Aegis Security"
+
+    # --- Report sharing ---------------------------------------------------
+    # Share links always expire; these bound how long a user may choose.
+    REPORT_SHARE_DEFAULT_TTL_DAYS: int = 14
+    REPORT_SHARE_MAX_TTL_DAYS: int = 90
+
+    # --- Attack-surface discovery ----------------------------------------
+    ASM_ENABLED: bool = True
+    # How often a discovery-enabled target is re-enumerated.
+    ASM_INTERVAL_HOURS: int = 24
+    # Ceiling on assets recorded per sweep, so one wildcard DNS zone cannot
+    # fill the targets table.
+    ASM_MAX_ASSETS_PER_SWEEP: int = 50
+    # Certificate-transparency source for subdomain discovery.
+    ASM_CRT_SH_URL: str = "https://crt.sh"
+    ASM_HTTP_TIMEOUT_SECONDS: int = 10
+
+    # --- Source hosts beyond GitHub ---------------------------------------
+    GITLAB_API_URL: str = "https://gitlab.com/api/v4"
+    BITBUCKET_API_URL: str = "https://api.bitbucket.org/2.0"
+
+    # --- API spec inference ----------------------------------------------
+    # Derive an OpenAPI description from a repo checkout so API testing has
+    # routes to exercise. Bounded so a huge monorepo cannot stall a scan.
+    API_SPEC_ENABLED: bool = True
+    API_SPEC_MAX_FILES: int = 2000
+    API_SPEC_MAX_FILE_BYTES: int = 512_000
 
     # --- Rate limiting ----------------------------------------------------
     # Redis-backed limits on abuse-prone auth endpoints. Disable in tests.

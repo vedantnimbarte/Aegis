@@ -10,7 +10,7 @@ from app.api import deps
 from app.db.session import get_db
 from app.models.user import User
 from app.schemas.user import UserIntegrationsUpdate, UserRead
-from app.services import billing_plans
+from app.services import audit_service, billing_plans, org_service
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -43,10 +43,15 @@ def update_integrations(
     current_user: User = Depends(deps.get_current_active_user),
     db: Session = Depends(get_db),
 ) -> User:
-    """Update BYOK LLM credentials and/or the Slack webhook (PATCH semantics).
+    """Update integration credentials (PATCH semantics).
 
-    Only provided fields change; an empty string clears a field. Setting a BYOK
-    LLM model/key requires a plan that allows it (Pro/Enterprise).
+    Covers BYOK LLM credentials, Slack, the outbound webhook, the source-host
+    tokens for GitLab and Bitbucket, and the Jira/Linear issue trackers. Only
+    provided fields change; an empty string clears a field. Setting a BYOK LLM
+    model/key requires a plan that allows it (Pro/Enterprise).
+
+    Every value here is a credential, so the audit log records *which* setting
+    changed and never what it was set to.
     """
     fields = payload.model_dump(exclude_unset=True)
 
@@ -67,4 +72,15 @@ def update_integrations(
 
     db.commit()
     db.refresh(current_user)
+
+    org = org_service.ensure_personal_organization(db, current_user)
+    audit_service.record(
+        db,
+        organization_id=org.id,
+        action=audit_service.INTEGRATION_UPDATED,
+        actor=current_user,
+        subject_type="user",
+        subject_id=current_user.id,
+        detail={"changed": sorted(fields.keys())},
+    )
     return current_user

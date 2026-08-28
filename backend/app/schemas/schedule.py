@@ -10,9 +10,9 @@ from app.models.enums import ScanFrequency, ScanMode
 
 
 class ScheduleCreate(BaseModel):
-    """Set up recurring scans for a repository."""
+    """Set up recurring scans for a target."""
 
-    repository_id: uuid.UUID
+    target_id: uuid.UUID
     frequency: ScanFrequency = ScanFrequency.WEEKLY
     scan_mode: ScanMode = ScanMode.QUICK
     custom_instructions: str | None = None
@@ -31,7 +31,7 @@ class ScheduleRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
-    repository_id: uuid.UUID
+    target_id: uuid.UUID
     scan_mode: ScanMode
     frequency: ScanFrequency
     custom_instructions: str | None = None

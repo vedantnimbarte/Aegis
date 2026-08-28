@@ -37,12 +37,14 @@ def generate_fix_pr(db: Session, scan: Scan, user: User) -> tuple[Optional[str],
     if not fixable:
         return None, "no_fixes"
 
-    repo_full = scan.repository.name  # "owner/repo"
+    repo_full = scan.target.name  # "owner/repo"
     owner = repo_full.split("/", 1)[0]
 
     installation_id = scan.github_installation_id
     if not installation_id:
-        inst = installation_service.get_by_account(db, user, owner)
+        inst = installation_service.get_by_account(
+            db, scan.target.organization_id, owner
+        )
         if inst is None:
             return None, "no_installation"
         installation_id = inst.installation_id

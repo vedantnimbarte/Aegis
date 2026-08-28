@@ -21,7 +21,7 @@ def _require_http_url(value: str | None) -> str | None:
 
 
 class GreyboxConfigUpsert(BaseModel):
-    """Create or update a repo's authenticated-testing config.
+    """Create or update a target's authenticated-testing config.
 
     Secret fields left unset are preserved on update; passing an empty string
     clears them.
@@ -51,7 +51,7 @@ class GreyboxConfigRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
-    repository_id: uuid.UUID
+    target_id: uuid.UUID
     target_url: str
     login_url: str | None = None
     username: str | None = None
@@ -63,7 +63,7 @@ class GreyboxConfigRead(BaseModel):
     def from_model(cls, config) -> "GreyboxConfigRead":
         return cls(
             id=config.id,
-            repository_id=config.repository_id,
+            target_id=config.target_id,
             target_url=config.target_url,
             login_url=config.login_url,
             username=config.username,

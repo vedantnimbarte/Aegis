@@ -21,6 +21,7 @@ import httpx
 from jose import jwt
 
 from app.core.config import settings
+from app.services import gate
 
 GITHUB_API_BASE = "https://api.github.com"
 _TIMEOUT = httpx.Timeout(15.0)
@@ -347,15 +348,17 @@ def create_issue(token: str, repo_full_name: str, *, title: str, body: str) -> s
 
 # --- Pure helpers ---------------------------------------------------------
 def fail_severities() -> set[str]:
-    return {
-        s.strip().lower()
-        for s in settings.GITHUB_CHECK_FAIL_SEVERITIES.split(",")
-        if s.strip()
-    }
+    """Platform-default blocking severities (a target may override them)."""
+    return gate.default_fail_severities()
 
 
 def check_conclusion(counts: dict[str, int]) -> str:
-    """``failure`` if any blocking-severity finding exists, else ``success``."""
+    """``failure`` if any blocking-severity finding exists, else ``success``.
+
+    Severity-only fallback for callers with no scan diff to hand. The gate a
+    pull request actually gets is ``gate.decide``, which also knows whether a
+    finding is new — see ``check_summary_for``.
+    """
     blocking = fail_severities()
     if any(counts.get(sev, 0) for sev in blocking):
         return "failure"
@@ -370,6 +373,29 @@ def check_summary(total: int, counts: dict[str, int]) -> tuple[str, str]:
     verdict = "Blocking issues found" if conclusion == "failure" else "Issues found"
     title = f"{total} finding{'s' if total != 1 else ''} — {verdict}"
     return (title, _severity_table(counts))
+
+
+def check_summary_for(
+    decision: "gate.GateDecision", counts: dict[str, int]
+) -> tuple[str, str]:
+    """(title, summary markdown) for a gate decision that knows what is new."""
+    if decision.total_count == 0:
+        return (
+            "No vulnerabilities found",
+            "Aegis found no exploitable vulnerabilities. ✅",
+        )
+    verdict = "Blocking issues found" if decision.blocked else "Issues found"
+    scope = (
+        f" ({decision.new_count} new)"
+        if decision.new_findings_only and decision.has_baseline
+        else ""
+    )
+    title = (
+        f"{decision.total_count} finding"
+        f"{'s' if decision.total_count != 1 else ''}{scope} — {verdict}"
+    )
+    body = decision.summary() + "\n\n" + _severity_table(counts)
+    return (title, body)
 
 
 def _severity_table(counts: dict[str, int]) -> str:
@@ -387,21 +413,29 @@ def format_findings_comment(
     *,
     total: int,
     report_url: str = "",
+    decision: Optional["gate.GateDecision"] = None,
+    new_fingerprints: Optional[set[str]] = None,
 ) -> str:
-    """A concise PR comment summarizing the scan's findings (markdown)."""
+    """A concise PR comment summarizing the scan's findings (markdown).
+
+    With a ``decision``, the comment says which findings are new and why the
+    check passed or failed — the difference between a gate developers keep and
+    one they route around.
+    """
     if total == 0:
         body = "## 🛡️ Aegis Security\n\nNo exploitable vulnerabilities found in this pull request. ✅"
         return body
 
-    conclusion = check_conclusion(counts)
-    badge = "❌ **Blocking**" if conclusion == "failure" else "⚠️ **Review**"
+    blocked = decision.blocked if decision else check_conclusion(counts) == "failure"
+    badge = "❌ **Blocking**" if blocked else "⚠️ **Review**"
     parts = [
         "## 🛡️ Aegis Security",
         f"{badge} — {total} validated finding{'s' if total != 1 else ''} in this pull request.",
         "",
-        _severity_table(counts),
-        "",
     ]
+    if decision is not None:
+        parts += [decision.summary(), ""]
+    parts += [_severity_table(counts), ""]
 
     top = sorted(
         findings,
@@ -409,13 +443,17 @@ def format_findings_comment(
     )[:10]
     if top:
         parts.append("### Findings")
+        fresh = new_fingerprints or set()
         for f in top:
             sev = _sev(f)
             emoji = _SEVERITY_EMOJI.get(sev, "•")
             title = _attr(f, "title") or "Untitled finding"
             loc = _attr(f, "file_path")
             suffix = f" — `{loc}`" if loc else ""
-            parts.append(f"- {emoji} **{sev.capitalize()}**: {title}{suffix}")
+            # Mark what this pull request introduced, so a reviewer can tell
+            # their own change apart from the repository's existing debt.
+            flag = " ✨ new" if _attr(f, "fingerprint") in fresh else ""
+            parts.append(f"- {emoji} **{sev.capitalize()}**: {title}{suffix}{flag}")
         if len(findings) > len(top):
             parts.append(f"- …and {len(findings) - len(top)} more")
         parts.append("")
