@@ -34,6 +34,20 @@ class ScanStatus(str, enum.Enum):
     RUNNING = "running"
     COMPLETED = "completed"
     FAILED = "failed"
+    CANCELED = "canceled"
+
+
+class TriageStatus(str, enum.Enum):
+    """A finding's review state, carried across re-scans by fingerprint.
+
+    ``OPEN`` is the default for anything Strix reports. The other two are set
+    by a human and suppress the finding from the "needs attention" counts.
+    """
+
+    OPEN = "open"
+    FALSE_POSITIVE = "false_positive"
+    ACCEPTED_RISK = "accepted_risk"
+    FIXED = "fixed"
 
 
 class ScanMode(str, enum.Enum):

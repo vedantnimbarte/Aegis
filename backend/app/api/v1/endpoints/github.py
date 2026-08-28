@@ -79,7 +79,7 @@ def delete_installation(
     record_id: uuid.UUID,
     current_user: User = Depends(deps.get_current_active_user),
     db: Session = Depends(get_db),
-) -> None:
+):
     """Unlink a GitHub App installation from the account."""
     installation = installation_service.get_installation(db, record_id, current_user)
     if installation is None:

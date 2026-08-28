@@ -126,7 +126,7 @@ class Settings(BaseSettings):
     RATE_LIMIT_ENABLED: bool = True
 
     # --- CORS -------------------------------------------------------------
-    BACKEND_CORS_ORIGINS: List[AnyHttpUrl] | List[str] = ["http://localhost:3000"]
+    BACKEND_CORS_ORIGINS: List[AnyHttpUrl] | List[str] = ["http://localhost:3001"]
 
     @field_validator("BACKEND_CORS_ORIGINS", mode="before")
     @classmethod

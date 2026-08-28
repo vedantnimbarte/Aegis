@@ -332,6 +332,19 @@ def create_pull_request(
     return resp.json()["html_url"]
 
 
+def create_issue(token: str, repo_full_name: str, *, title: str, body: str) -> str:
+    """Open an issue and return its html_url."""
+    with httpx.Client(timeout=_TIMEOUT) as client:
+        resp = client.post(
+            f"{GITHUB_API_BASE}/repos/{repo_full_name}/issues",
+            headers=_token_headers(token),
+            json={"title": title, "body": body},
+        )
+    if resp.status_code != 201:
+        raise GitHubAppError(f"Could not open issue (HTTP {resp.status_code})")
+    return resp.json()["html_url"]
+
+
 # --- Pure helpers ---------------------------------------------------------
 def fail_severities() -> set[str]:
     return {

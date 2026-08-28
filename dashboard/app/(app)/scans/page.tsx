@@ -86,7 +86,11 @@ export default function ScansPage() {
                     {scan.scan_mode}
                   </span>
                   <span className="hidden w-24 font-mono text-[12px] text-muted sm:block">
-                    {formatDuration(scan.started_at, scan.completed_at)}
+                    {scan.status === "running" || scan.status === "pending" ? (
+                      <InlineProgress scanId={scan.id} />
+                    ) : (
+                      formatDuration(scan.started_at, scan.completed_at)
+                    )}
                   </span>
                   <span className="justify-self-end sm:w-28 sm:justify-self-start">
                     <StatusBadge status={scan.status} />
@@ -99,5 +103,26 @@ export default function ScansPage() {
         </Card>
       )}
     </>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/** Live task counter for an in-flight scan, so the list isn't just "Running".
+ *  Renders nothing until Strix's run state exists, which keeps the row quiet
+ *  during checkout and sandbox startup. */
+function InlineProgress({ scanId }: { scanId: string }) {
+  const { data } = useQuery({
+    queryKey: ["scan-progress", scanId],
+    queryFn: () => api.getScanProgress(scanId),
+    refetchInterval: 5000,
+    retry: false,
+  });
+
+  if (!data || data.steps.length === 0) return <span className="text-faint">—</span>;
+  const done = data.steps.filter((s) => s.status === "done").length;
+  return (
+    <span className="text-cyan-soft">
+      {done}/{data.steps.length} tasks
+    </span>
   );
 }

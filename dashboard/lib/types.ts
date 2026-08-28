@@ -8,7 +8,7 @@ export type SubscriptionStatus =
   | "past_due"
   | "canceled"
   | "incomplete";
-export type ScanStatus = "pending" | "running" | "completed" | "failed";
+export type ScanStatus = "pending" | "running" | "completed" | "failed" | "canceled";
 export type ScanMode = "quick" | "standard" | "deep";
 export type ScanFrequency = "daily" | "weekly" | "monthly";
 export type ScanTrigger = "manual" | "scheduled" | "pull_request";
@@ -88,6 +88,39 @@ export interface Scan {
   started_at: string | null;
   completed_at: string | null;
   created_at: string;
+  cost_usd: number | null;
+  llm_requests: number | null;
+  input_tokens: number | null;
+  output_tokens: number | null;
+}
+
+export interface ProgressStep {
+  title: string;
+  detail: string | null;
+  status: "pending" | "active" | "done";
+  agent: string | null;
+}
+
+export interface ScanProgress {
+  status: ScanStatus;
+  phase: string;
+  run_id: string | null;
+  steps: ProgressStep[];
+  agents: { name: string; status: string }[];
+  llm_requests: number;
+  input_tokens: number;
+  output_tokens: number;
+  cost_usd: number | null;
+}
+
+export type TriageStatus = "open" | "false_positive" | "accepted_risk" | "fixed";
+
+export interface ScanDiff {
+  has_baseline: boolean;
+  previous_scan_id: string | null;
+  new_count: number;
+  fixed_count: number;
+  persisting_count: number;
 }
 
 export interface Vulnerability {
@@ -101,6 +134,11 @@ export interface Vulnerability {
   cvss_score: number | null;
   file_path: string | null;
   has_fix: boolean;
+  fingerprint: string | null;
+  triage_status: TriageStatus;
+  triage_note: string | null;
+  github_issue_url: string | null;
+  is_new: boolean;
 }
 
 export interface ScanReport {
@@ -108,6 +146,9 @@ export interface ScanReport {
   total: number;
   counts_by_severity: Record<Severity, number>;
   fixable_count: number;
+  open_count: number;
+  suppressed_count: number;
+  diff: ScanDiff;
   vulnerabilities: Vulnerability[];
 }
 

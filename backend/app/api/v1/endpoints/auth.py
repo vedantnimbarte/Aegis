@@ -1,5 +1,7 @@
 """Authentication endpoints (GitHub OAuth + JWT issuance/refresh)."""
-from __future__ import annotations
+# No `from __future__ import annotations` here: slowapi's @limiter.limit wrapper
+# doesn't carry this module's globals, so FastAPI cannot resolve string
+# annotations on the limited routes and OpenAPI generation fails.
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from jose import JWTError

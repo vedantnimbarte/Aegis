@@ -26,6 +26,7 @@ export const STATUS_META: Record<ScanStatus, Tone> = {
   running: { label: "Running", pill: "border-cyan/30 bg-cyan/10 text-cyan-soft", dot: "#22D3EE" },
   completed: { label: "Completed", pill: "border-signal/30 bg-signal/10 text-signal", dot: "#4ADE80" },
   failed: { label: "Failed", pill: "border-danger/30 bg-danger/10 text-danger", dot: "#FB5C6B" },
+  canceled: { label: "Canceled", pill: "border-line bg-surface text-muted", dot: "#8A93A6" },
 };
 
 /** Weighted contribution of each severity to a 0–100 risk score. */

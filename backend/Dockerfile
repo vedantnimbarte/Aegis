@@ -12,6 +12,11 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends build-essential libpq-dev git \
     && rm -rf /var/lib/apt/lists/*
 
+# Strix drives its sandbox containers by shelling out to the `docker` CLI
+# (against $DOCKER_HOST, the isolated dind daemon) — the Python SDK isn't
+# enough. Copy just the static client binary; no daemon, no apt repo.
+COPY --from=docker:27-cli /usr/local/bin/docker /usr/local/bin/docker
+
 COPY requirements.txt requirements-worker.txt ./
 RUN pip install --upgrade pip && pip install -r requirements.txt
 

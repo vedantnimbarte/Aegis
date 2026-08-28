@@ -3,11 +3,16 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft,
+  Check,
   ChevronDown,
+  Circle,
   Download,
+  ExternalLink,
+  Github,
   GitPullRequest,
   Radar,
   ShieldCheck,
+  XCircle,
   FileWarning,
   Loader2,
   AlertTriangle,
@@ -17,9 +22,11 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useMemo } from "react";
 
+import { CodeBlock, Markdown } from "@/components/Markdown";
 import {
   Button,
   Card,
+  cn,
   ErrorState,
   Pill,
   SeverityBadge,
@@ -34,10 +41,18 @@ import {
   riskScore,
   SEVERITY_ORDER,
 } from "@/lib/format";
-import type { Scan, ScanReport, Severity, Vulnerability } from "@/lib/types";
+import type {
+  ProgressStep,
+  TriageStatus,
+  Scan,
+  ScanReport,
+  Severity,
+  Vulnerability,
+} from "@/lib/types";
 
 export default function ScanDetailPage() {
   const { id } = useParams<{ id: string }>();
+  const queryClient = useQueryClient();
 
   const scanQuery = useQuery({
     queryKey: ["scan", id],
@@ -62,6 +77,11 @@ export default function ScanDetailPage() {
     const r = (reposQuery.data ?? []).find((r) => r.id === scan?.repository_id);
     return r?.name;
   }, [reposQuery.data, scan?.repository_id]);
+
+  const cancel = useMutation({
+    mutationFn: () => api.cancelScan(id),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["scan", id] }),
+  });
 
   const download = useMutation({
     mutationFn: () => api.getReportPdf(id),
@@ -110,6 +130,16 @@ export default function ScanDetailPage() {
           </div>
         </div>
         <div className="flex items-center gap-3">
+          {scan.status === "pending" || scan.status === "running" ? (
+            <Button
+              variant="secondary"
+              icon={XCircle}
+              loading={cancel.isPending}
+              onClick={() => cancel.mutate()}
+            >
+              Cancel scan
+            </Button>
+          ) : null}
           {scan.status === "completed" ? (
             <Button
               variant="secondary"
@@ -137,10 +167,46 @@ export default function ScanDetailPage() {
         </Card>
       ) : null}
 
+      {cancel.error ? (
+        <div className="mb-6">
+          <ErrorState message="Could not cancel this scan. It may have just finished." />
+        </div>
+      ) : null}
+
+      {/* Run cost — only known once the worker has ingested the run. */}
+      {scan.cost_usd != null || scan.llm_requests != null ? (
+        <Card className="mb-6 flex flex-wrap items-center gap-x-8 gap-y-2 px-5 py-3.5">
+          <span className="font-mono text-[10px] uppercase tracking-wide text-faint">
+            Run cost
+          </span>
+          {scan.cost_usd != null ? (
+            <span className="text-[13px] text-muted">
+              Spend <span className="font-mono text-fg">${scan.cost_usd.toFixed(2)}</span>
+            </span>
+          ) : null}
+          {scan.llm_requests != null ? (
+            <span className="text-[13px] text-muted">
+              Model calls <span className="font-mono text-fg">{scan.llm_requests}</span>
+            </span>
+          ) : null}
+          {scan.input_tokens != null ? (
+            <span className="text-[13px] text-muted">
+              Tokens{" "}
+              <span className="font-mono text-fg">
+                {(scan.input_tokens / 1_000_000).toFixed(2)}M in
+                {scan.output_tokens != null
+                  ? ` · ${(scan.output_tokens / 1000).toFixed(0)}k out`
+                  : ""}
+              </span>
+            </span>
+          ) : null}
+        </Card>
+      ) : null}
+
       {/* Body by status */}
       {scan.status === "pending" || scan.status === "running" ? (
         <InProgress scan={scan} />
-      ) : scan.status === "failed" ? (
+      ) : scan.status === "failed" || scan.status === "canceled" ? (
         <FailedState scan={scan} />
       ) : reportQuery.isLoading ? (
         <Spinner label="Loading report…" />
@@ -154,34 +220,172 @@ export default function ScanDetailPage() {
 }
 
 /* -------------------------------------------------------------------------- */
+const PHASE_LABEL: Record<string, string> = {
+  preparing: "Cloning the repository and starting the sandbox",
+  starting: "Starting the agent run",
+  running: "Agents are probing the codebase",
+};
+
+function StepIcon({ status }: { status: ProgressStep["status"] }) {
+  if (status === "done")
+    return <Check className="h-3.5 w-3.5 text-signal" strokeWidth={2.5} />;
+  if (status === "active")
+    return <Loader2 className="h-3.5 w-3.5 animate-spin text-cyan-soft" strokeWidth={2.5} />;
+  return <Circle className="h-3.5 w-3.5 text-faint" strokeWidth={2} />;
+}
+
 function InProgress({ scan }: { scan: Scan }) {
+  // Strix's run state only appears once the sandbox is up, so this polls
+  // independently of the scan record and simply renders less when empty.
+  const progressQuery = useQuery({
+    queryKey: ["scan-progress", scan.id],
+    queryFn: () => api.getScanProgress(scan.id),
+    refetchInterval: 4000,
+    retry: false,
+  });
+
+  const progress = progressQuery.data;
+  const steps = progress?.steps ?? [];
+  const agents = (progress?.agents ?? []).filter((a) => a.name !== "Root Agent");
+  const done = steps.filter((s) => s.status === "done").length;
+
+  const headline =
+    scan.status === "pending"
+      ? "Queued for scanning"
+      : PHASE_LABEL[progress?.phase ?? ""] ?? "Pentest in progress";
+
   return (
-    <Card className="flex flex-col items-center justify-center px-6 py-16 text-center">
-      <span className="mb-4 grid h-12 w-12 place-items-center rounded-xl border border-cyan/30 bg-cyan/10 text-cyan-soft">
-        <Loader2 className="h-6 w-6 animate-spin" strokeWidth={2} />
-      </span>
-      <h3 className="font-display text-[15px] font-semibold text-fg">
-        {scan.status === "pending" ? "Queued for scanning" : "Pentest in progress"}
-      </h3>
-      <p className="mt-1.5 max-w-sm text-[13px] leading-relaxed text-muted">
-        Aegis is cloning the repository into an isolated sandbox and running autonomous agents
-        against it. This page updates automatically.
-      </p>
-    </Card>
+    <div className="space-y-4">
+      <Card className="px-5 py-4">
+        <div className="flex items-center gap-3">
+          <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg border border-cyan/30 bg-cyan/10 text-cyan-soft">
+            <Loader2 className="h-4 w-4 animate-spin" strokeWidth={2} />
+          </span>
+          <div className="min-w-0 flex-1">
+            <h3 className="font-display text-[15px] font-semibold text-fg">{headline}</h3>
+            <p className="mt-0.5 text-[12px] text-muted">
+              {steps.length > 0
+                ? `${done} of ${steps.length} tasks complete`
+                : "This page updates automatically."}
+            </p>
+          </div>
+          {progress && progress.llm_requests > 0 ? (
+            <div className="hidden shrink-0 gap-5 sm:flex">
+              <div className="text-right">
+                <p className="font-mono text-[10px] uppercase tracking-wide text-faint">
+                  Model calls
+                </p>
+                <p className="font-mono text-[13px] text-fg">{progress.llm_requests}</p>
+              </div>
+              {progress.cost_usd !== null ? (
+                <div className="text-right">
+                  <p className="font-mono text-[10px] uppercase tracking-wide text-faint">
+                    Spend
+                  </p>
+                  <p className="font-mono text-[13px] text-fg">
+                    ${progress.cost_usd.toFixed(2)}
+                  </p>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+      </Card>
+
+      {agents.length > 0 ? (
+        <Card className="px-5 py-4">
+          <p className="mb-3 font-mono text-[10px] uppercase tracking-wide text-faint">
+            Active agents
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {agents.map((agent) => (
+              <Pill
+                key={agent.name}
+                tone={
+                  agent.status === "running"
+                    ? "border-cyan/30 bg-cyan/10 text-cyan-soft"
+                    : "border-line bg-ink text-muted"
+                }
+              >
+                <span
+                  className={
+                    agent.status === "running"
+                      ? "mr-1.5 inline-block h-1.5 w-1.5 rounded-full bg-cyan"
+                      : "mr-1.5 inline-block h-1.5 w-1.5 rounded-full bg-faint"
+                  }
+                />
+                {agent.name}
+              </Pill>
+            ))}
+          </div>
+        </Card>
+      ) : null}
+
+      {steps.length > 0 ? (
+        <Card className="px-5 py-4">
+          <p className="mb-3 font-mono text-[10px] uppercase tracking-wide text-faint">
+            Steps
+          </p>
+          <ol className="space-y-2.5">
+            {steps.map((step, i) => (
+              <li key={`${step.title}-${i}`} className="flex gap-2.5">
+                <span className="mt-0.5 shrink-0">
+                  <StepIcon status={step.status} />
+                </span>
+                <div className="min-w-0">
+                  <p
+                    className={
+                      step.status === "done"
+                        ? "text-[13px] text-muted"
+                        : "text-[13px] text-fg"
+                    }
+                  >
+                    {step.title}
+                  </p>
+                  {step.detail ? (
+                    <p className="mt-0.5 text-[12px] leading-relaxed text-faint">
+                      {step.detail}
+                    </p>
+                  ) : null}
+                </div>
+              </li>
+            ))}
+          </ol>
+        </Card>
+      ) : null}
+    </div>
   );
 }
 
 function FailedState({ scan }: { scan: Scan }) {
+  // A canceled scan is a deliberate stop, not a fault — don't dress it in red.
+  const canceled = scan.status === "canceled";
   return (
     <Card className="px-5 py-6">
       <div className="flex items-start gap-3">
-        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg border border-danger/30 bg-danger/10 text-danger">
-          <AlertTriangle className="h-4 w-4" strokeWidth={2} />
+        <span
+          className={cn(
+            "grid h-9 w-9 shrink-0 place-items-center rounded-lg border",
+            canceled
+              ? "border-line bg-ink text-muted"
+              : "border-danger/30 bg-danger/10 text-danger"
+          )}
+        >
+          {canceled ? (
+            <XCircle className="h-4 w-4" strokeWidth={2} />
+          ) : (
+            <AlertTriangle className="h-4 w-4" strokeWidth={2} />
+          )}
         </span>
         <div>
-          <h3 className="font-display text-[15px] font-semibold text-fg">Scan failed</h3>
+          <h3 className="font-display text-[15px] font-semibold text-fg">
+            {canceled ? "Scan canceled" : "Scan failed"}
+          </h3>
           <p className="mt-1.5 text-[13px] leading-relaxed text-muted">
-            {scan.error_message || "The scan did not complete. Please try launching it again."}
+            {canceled
+              ? "You stopped this scan before it finished, so there are no results."
+              : scan.error_message ||
+                "The scan did not complete. Please try launching it again."}
           </p>
         </div>
       </div>
@@ -233,6 +437,33 @@ function Report({ report }: { report: ScanReport }) {
         </div>
       </Card>
 
+      {report.diff.has_baseline ? (
+        <Card className="mb-6 flex flex-wrap items-center gap-x-6 gap-y-2 px-5 py-3.5">
+          <span className="font-mono text-[10px] uppercase tracking-wide text-faint">
+            Since last scan
+          </span>
+          <span className="text-[13px] text-fg">
+            <span className="font-display font-bold text-danger">{report.diff.new_count}</span>{" "}
+            <span className="text-muted">new</span>
+          </span>
+          <span className="text-[13px] text-fg">
+            <span className="font-display font-bold text-signal">{report.diff.fixed_count}</span>{" "}
+            <span className="text-muted">fixed</span>
+          </span>
+          <span className="text-[13px] text-fg">
+            <span className="font-display font-bold text-fg">
+              {report.diff.persisting_count}
+            </span>{" "}
+            <span className="text-muted">still open</span>
+          </span>
+          {report.suppressed_count > 0 ? (
+            <span className="text-[13px] text-muted">
+              · {report.suppressed_count} triaged away
+            </span>
+          ) : null}
+        </Card>
+      ) : null}
+
       <AutofixCard report={report} />
 
       {/* Findings grouped by severity */}
@@ -240,7 +471,7 @@ function Report({ report }: { report: ScanReport }) {
         {SEVERITY_ORDER.flatMap((sev) =>
           report.vulnerabilities.filter((v) => v.severity === sev)
         ).map((vuln) => (
-          <VulnerabilityCard key={vuln.id} vuln={vuln} />
+          <VulnerabilityCard key={vuln.id} vuln={vuln} scanId={report.scan.id} />
         ))}
       </div>
     </>
@@ -329,7 +560,31 @@ function AutofixCard({ report }: { report: ScanReport }) {
 }
 
 /* -------------------------------------------------------------------------- */
-function VulnerabilityCard({ vuln }: { vuln: Vulnerability }) {
+const TRIAGE_CHOICES: { value: TriageStatus; label: string }[] = [
+  { value: "open", label: "Open" },
+  { value: "false_positive", label: "False positive" },
+  { value: "accepted_risk", label: "Accepted risk" },
+  { value: "fixed", label: "Fixed" },
+];
+
+const TRIAGE_TONE: Record<TriageStatus, string> = {
+  open: "border-line bg-ink text-muted",
+  false_positive: "border-line bg-ink text-faint",
+  accepted_risk: "border-amber/30 bg-amber/10 text-amber",
+  fixed: "border-signal/30 bg-signal/10 text-signal",
+};
+
+function VulnerabilityCard({ vuln, scanId }: { vuln: Vulnerability; scanId: string }) {
+  const queryClient = useQueryClient();
+  const triage = useMutation({
+    mutationFn: (status: TriageStatus) =>
+      api.triageFinding(scanId, vuln.id, { status }),
+    // Refetch the report so the diff/suppressed counts stay in step.
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["report", scanId] }),
+  });
+
+  const status = vuln.triage_status;
+  const suppressed = status !== "open";
   const meta: { k: string; v: string }[] = [];
   if (vuln.cvss_score != null) meta.push({ k: "CVSS", v: vuln.cvss_score.toFixed(1) });
   if (vuln.owasp_category) meta.push({ k: "Class", v: vuln.owasp_category });
@@ -340,9 +595,27 @@ function VulnerabilityCard({ vuln }: { vuln: Vulnerability }) {
       <details className="group">
         <summary className="flex cursor-pointer list-none items-center gap-3 px-4 py-3.5 transition-colors hover:bg-surface/60 [&::-webkit-details-marker]:hidden">
           <SeverityBadge severity={vuln.severity} />
-          <span className="min-w-0 flex-1 truncate font-display text-[14px] font-semibold text-fg">
+          <span
+            className={
+              suppressed
+                ? "min-w-0 flex-1 truncate font-display text-[14px] font-semibold text-muted line-through decoration-faint"
+                : "min-w-0 flex-1 truncate font-display text-[14px] font-semibold text-fg"
+            }
+          >
             {vuln.title}
           </span>
+          {vuln.is_new ? (
+            <span className="hidden shrink-0 sm:inline">
+              <Pill tone="border-danger/30 bg-danger/10 text-danger">New</Pill>
+            </span>
+          ) : null}
+          {suppressed ? (
+            <span className="hidden shrink-0 sm:inline">
+              <Pill tone={TRIAGE_TONE[status]}>
+                {TRIAGE_CHOICES.find((c) => c.value === status)?.label ?? status}
+              </Pill>
+            </span>
+          ) : null}
           {vuln.has_fix ? (
             <span className="hidden shrink-0 sm:inline">
               <Pill tone="border-signal/30 bg-signal/10 text-signal">
@@ -351,6 +624,14 @@ function VulnerabilityCard({ vuln }: { vuln: Vulnerability }) {
               </Pill>
             </span>
           ) : null}
+          {/* Only while collapsed — expanded, the labelled control sits in the
+              description toolbar instead. */}
+          <span className="shrink-0 group-open:hidden">
+            {/* Nested so the responsive rule can't out-specify group-open. */}
+            <span className="hidden sm:inline">
+              <IssueAction vuln={vuln} scanId={scanId} compact />
+            </span>
+          </span>
           {vuln.cvss_score != null ? (
             <span className="hidden shrink-0 font-mono text-[11px] text-muted sm:inline">
               CVSS {vuln.cvss_score.toFixed(1)}
@@ -375,7 +656,10 @@ function VulnerabilityCard({ vuln }: { vuln: Vulnerability }) {
           ) : null}
 
           <Section title="Description">
-            <Prose text={vuln.description} />
+            <Markdown
+              text={vuln.description}
+              actions={<IssueAction vuln={vuln} scanId={scanId} />}
+            />
           </Section>
 
           {vuln.poc_code ? (
@@ -386,12 +670,134 @@ function VulnerabilityCard({ vuln }: { vuln: Vulnerability }) {
 
           {vuln.remediation ? (
             <Section title="Remediation" icon={ShieldCheck}>
-              <Prose text={vuln.remediation} />
+              <Markdown text={vuln.remediation} />
             </Section>
           ) : null}
+
+          {/* Verdicts are stored against the finding's fingerprint, so they
+              carry forward to every future scan of this repository. */}
+          <div className="border-t border-line pt-3.5">
+            <p className="mb-2 font-mono text-[10px] uppercase tracking-wide text-faint">
+              Triage
+            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              {TRIAGE_CHOICES.map((choice) => (
+                <button
+                  key={choice.value}
+                  type="button"
+                  disabled={triage.isPending || !vuln.fingerprint}
+                  onClick={() => triage.mutate(choice.value)}
+                  className={cn(
+                    "rounded-md border px-2.5 py-1 font-mono text-[11px] transition-colors disabled:opacity-50",
+                    choice.value === status
+                      ? TRIAGE_TONE[choice.value]
+                      : "border-line bg-ink text-faint hover:text-muted"
+                  )}
+                >
+                  {choice.label}
+                </button>
+              ))}
+              {triage.isPending ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin text-faint" strokeWidth={2} />
+              ) : null}
+            </div>
+            {!vuln.fingerprint ? (
+              <p className="mt-2 text-[12px] text-faint">
+                This finding predates fingerprinting and cannot be triaged.
+              </p>
+            ) : null}
+            {triage.error ? (
+              <p className="mt-2 text-[12px] text-danger">Could not save that verdict.</p>
+            ) : null}
+          </div>
         </div>
       </details>
     </Card>
+  );
+}
+
+/** Opens — or links to — the GitHub issue tracking this finding.
+    `compact` is the icon-only form shown in the collapsed summary row, where
+    there is no space for a label or an error line. */
+function IssueAction({
+  vuln,
+  scanId,
+  compact,
+}: {
+  vuln: Vulnerability;
+  scanId: string;
+  compact?: boolean;
+}) {
+  const queryClient = useQueryClient();
+  // The issue URL is stored against the fingerprint, so the refetch turns the
+  // button into a link and a second click can't open a duplicate.
+  const issue = useMutation({
+    mutationFn: () => api.createFindingIssue(scanId, vuln.id),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["report", scanId] }),
+  });
+
+  const chip =
+    "inline-flex items-center gap-1.5 rounded-md border border-line bg-ink transition-colors hover:border-cyan/40 hover:text-fg";
+  const size = compact ? "p-1.5" : "px-2 py-1.5 font-mono text-[11px]";
+  const failed = issue.error
+    ? issue.error instanceof ApiError
+      ? issue.error.message
+      : "Could not create the issue."
+    : null;
+
+  if (vuln.github_issue_url) {
+    return (
+      <a
+        href={vuln.github_issue_url}
+        target="_blank"
+        rel="noreferrer noopener"
+        title="View the GitHub issue for this finding"
+        // Inside <summary>, a click that reaches the parent toggles the card.
+        onClick={(e) => e.stopPropagation()}
+        className={cn(chip, size, "text-muted")}
+      >
+        <Github className="h-3.5 w-3.5" strokeWidth={2} />
+        {compact ? null : (
+          <>
+            View GitHub issue
+            <ExternalLink className="h-3 w-3" strokeWidth={2} />
+          </>
+        )}
+      </a>
+    );
+  }
+
+  return (
+    <>
+      <button
+        type="button"
+        disabled={issue.isPending || !vuln.fingerprint}
+        title={failed ?? "Create a GitHub issue for this finding"}
+        onClick={(e) => {
+          e.stopPropagation();
+          e.preventDefault();
+          issue.mutate();
+        }}
+        className={cn(
+          chip,
+          size,
+          failed ? "border-danger/40 text-danger" : "text-faint",
+          "disabled:opacity-50"
+        )}
+      >
+        {issue.isPending ? (
+          <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={2} />
+        ) : (
+          <Github className="h-3.5 w-3.5" strokeWidth={2} />
+        )}
+        {compact ? null : "Create GitHub issue"}
+      </button>
+      {failed && !compact ? (
+        // `order-last` + `w-full` drop the reason onto its own line below
+        // the whole toolbar, rather than wrapping the icons past it.
+        <p className="order-last w-full text-[12px] text-danger">{failed}</p>
+      ) : null}
+    </>
   );
 }
 
@@ -412,37 +818,5 @@ function Section({
       </p>
       {children}
     </div>
-  );
-}
-
-/** Renders text with paragraphs and fenced code blocks lightly formatted. */
-function Prose({ text }: { text: string }) {
-  const blocks = text.split(/```/);
-  return (
-    <div className="space-y-2.5 text-[13px] leading-relaxed text-muted">
-      {blocks.map((block, i) =>
-        i % 2 === 1 ? (
-          <CodeBlock key={i} text={block.replace(/^\w*\n/, "").trim()} />
-        ) : (
-          block
-            .trim()
-            .split(/\n{2,}/)
-            .filter(Boolean)
-            .map((para, j) => (
-              <p key={`${i}-${j}`} className="whitespace-pre-wrap">
-                {para}
-              </p>
-            ))
-        )
-      )}
-    </div>
-  );
-}
-
-function CodeBlock({ text }: { text: string }) {
-  return (
-    <pre className="overflow-x-auto rounded-lg border border-line bg-obsidian px-3.5 py-3 font-mono text-[12px] leading-relaxed text-muted">
-      <code>{text}</code>
-    </pre>
   );
 }
