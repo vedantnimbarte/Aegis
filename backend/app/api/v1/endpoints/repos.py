@@ -74,6 +74,29 @@ def sync_repository(
                 detail={"message": exc.detail, "reason": exc.reason},
             )
 
+        # The repo id arrives from the client, so ownership is verified here
+        # rather than trusting the dropdown: scanning is an active attack and
+        # must only ever run against code the user can actually change.
+        if not current_user.github_token:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                detail="No GitHub token on file. Reconnect your GitHub account.",
+            )
+        try:
+            authorized = github_service.user_can_access_repository(
+                current_user.github_token, payload.github_repo_id
+            )
+        except github_service.GitHubOAuthError as exc:
+            raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail=str(exc))
+        if not authorized:
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                detail=(
+                    "You do not have write access to this repository on GitHub. "
+                    "Aegis only scans repositories you control."
+                ),
+            )
+
     return repo_service.sync_repository(db, current_user, payload)
 
 
@@ -112,7 +135,7 @@ def delete_greybox(
     repo_id: uuid.UUID,
     current_user: User = Depends(deps.get_current_active_user),
     db: Session = Depends(get_db),
-) -> None:
+):
     """Remove the repo's authenticated-testing config."""
     repo = _owned_repo(db, repo_id, current_user)
     config = greybox_service.get_config(db, repo)

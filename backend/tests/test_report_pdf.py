@@ -95,6 +95,43 @@ def test_enum_like_severity_and_paging() -> None:
     assert bytes(pdf[:5]) == b"%PDF-"
 
 
+def test_md_inline_reduces_spans_fpdf_cannot_render() -> None:
+    inline = report_pdf._md_inline
+    assert inline("see [the docs](https://x/y)") == "see the docs (https://x/y)"
+    assert inline("call `run_shell` now") == "call run_shell now"
+    assert inline("at the *Git* level") == "at the Git level"
+    # Bold survives — multi_cell's markdown mode renders it.
+    assert inline("**Gap 1**: fail-open") == "**Gap 1**: fail-open"
+    # Flags and dunders must come through untouched (the markers are disabled).
+    assert inline("pass --userns=keep-id to __init__.py") == (
+        "pass --userns=keep-id to __init__.py"
+    )
+
+
+def test_markdown_finding_renders_without_markup() -> None:
+    """A markdown-heavy finding lays out; the raw markers are not drawn."""
+    report = SimpleNamespace(
+        scan=_scan(),
+        total=1,
+        counts_by_severity={"critical": 0, "high": 1, "medium": 0, "low": 0, "info": 0},
+        vulnerabilities=[
+            _vuln(
+                description=(
+                    "### Description\nA **bold** claim with `code`.\n\n"
+                    "- first bullet\n- second bullet\n\n"
+                    "1. step one\n2. step two\n\n"
+                    "> a quoted line\n\n"
+                    "| Gap | Blocks |\n| --- | --- |\n| Fail-open | no |\n\n"
+                    "```rust\nfn main() {}\n```\n\n---\nSee [docs](https://x/y).\n"
+                ),
+                remediation="Run with `--userns=keep-id`.",
+            )
+        ],
+    )
+    pdf = report_pdf.build_report_pdf(report, "acme/markdown")
+    assert bytes(pdf[:5]) == b"%PDF-"
+
+
 def test_sanitizer_replaces_non_latin1() -> None:
     # Smart punctuation / arrows / bullets are normalized to ASCII.
     assert report_pdf._s("’ “ ” — → •") == "' \" \" - -> -"

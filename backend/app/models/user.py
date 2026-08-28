@@ -77,6 +77,13 @@ class User(UUIDMixin, TimestampMixin, Base):
     # Slack incoming-webhook URL for scan-complete notifications. Never returned
     # by the API (only a boolean indicating its presence).
     slack_webhook_url: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)
+    # Generic outbound webhook: one signed POST per finished scan, so findings
+    # can reach Jira/Linear/PagerDuty/a SIEM without Aegis building each
+    # integration. The shared secret signs the body and is encrypted at rest.
+    webhook_url: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)
+    webhook_secret: Mapped[Optional[str]] = mapped_column(
+        EncryptedString(512), nullable=True
+    )
 
     # Relationships -------------------------------------------------------
     repositories: Mapped[List["Repository"]] = relationship(

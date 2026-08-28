@@ -27,11 +27,12 @@ from app.models.scan import Scan
 from app.models.vulnerability import Vulnerability
 from app.services import (
     billing_plans,
-    email,
+    finding_identity,
     github_app,
     greybox_instructions,
     notifications,
     repo_checkout,
+    scan_progress,
     strix_report,
     strix_runner,
 )
@@ -41,6 +42,21 @@ logger = get_task_logger(__name__)
 
 # Persisted error messages are truncated to keep them sane in the DB/UI.
 _MAX_ERROR_CHARS = 2000
+_ELISION = "\n…[truncated]…\n"
+
+
+def _truncate_error(message: str) -> str:
+    """Trim a long error to ``_MAX_ERROR_CHARS``, keeping BOTH ends.
+
+    Head-only truncation loses the cause: a Strix/Docker traceback names the
+    failure in its last lines, so cutting the tail leaves an unactionable
+    stack. Keep a slice of each and mark the gap.
+    """
+    if len(message) <= _MAX_ERROR_CHARS:
+        return message
+    budget = _MAX_ERROR_CHARS - len(_ELISION)
+    head = budget // 3
+    return message[:head] + _ELISION + message[-(budget - head):]
 
 
 @celery.task(name="app.workers.tasks.run_strix_scan", bind=True)
@@ -104,6 +120,7 @@ def run_strix_scan(self, scan_id: str) -> dict:
 
         findings = strix_report.parse_report(run_dir)
         _persist_findings(db, scan, findings)
+        _record_usage(db, scan, workdir)
         _mark_completed(db, scan)
 
         if is_pr:
@@ -184,24 +201,16 @@ def _notify(db, scan_id: str, status: str, findings=None) -> None:
     report_url = _report_url(scan)
     repo_name = scan.repository.name
 
-    if not _is_pr_scan(scan):
-        email.send_scan_complete_email(
-            user.email,
-            repo_name=repo_name,
-            status=status,
-            total=total,
-            counts=counts,
-            report_url=report_url,
-        )
-    if user.slack_webhook_url:
-        notifications.notify_scan_complete(
-            user.slack_webhook_url,
-            repo_name=repo_name,
-            status=status,
-            total=total,
-            counts=counts,
-            report_url=report_url,
-        )
+    notifications.notify_scan_finished(
+        # PR scans already report in the pull request itself, so skip email.
+        email_to=None if _is_pr_scan(scan) else user.email,
+        slack_webhook_url=user.slack_webhook_url,
+        repo_name=repo_name,
+        status=status,
+        total=total,
+        counts=counts,
+        report_url=report_url,
+    )
 
 
 def _start_pr_check(db, scan: Scan, token: str) -> None:
@@ -311,9 +320,34 @@ def _persist_findings(db, scan: Scan, findings: list[strix_report.ParsedFinding]
                 cvss_score=f.cvss_score,
                 file_path=f.file_path,
                 suggested_fix=f.suggested_fix,
+                # Identity that survives re-scans, so this finding can be
+                # diffed and triaged against future runs.
+                fingerprint=finding_identity.fingerprint(
+                    title=f.title,
+                    file_path=f.file_path,
+                    classification=f.owasp_category,
+                ),
             )
         )
     db.flush()
+
+
+def _record_usage(db, scan: Scan, workdir: Path) -> None:
+    """Persist the run's LLM spend before the working directory is deleted.
+
+    Best-effort: usage reporting must never turn a completed scan into a
+    failed one, so any problem reading the run state is swallowed.
+    """
+    try:
+        usage = scan_progress.read_progress(workdir)
+    except Exception:  # noqa: BLE001 - accounting is not worth failing a scan
+        logger.warning("Could not read LLM usage for scan %s", scan.id, exc_info=True)
+        return
+
+    scan.cost_usd = usage.cost_usd
+    scan.llm_requests = usage.llm_requests or None
+    scan.input_tokens = usage.input_tokens or None
+    scan.output_tokens = usage.output_tokens or None
 
 
 def _fail(db, scan_id: str, message: str) -> None:
@@ -324,7 +358,7 @@ def _fail(db, scan_id: str, message: str) -> None:
         return
     scan.status = ScanStatus.FAILED
     scan.completed_at = _now()
-    scan.error_message = message[:_MAX_ERROR_CHARS]
+    scan.error_message = _truncate_error(message)
     db.commit()
 
 

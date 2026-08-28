@@ -61,7 +61,7 @@ def delete_schedule(
     schedule_id: uuid.UUID,
     current_user: User = Depends(deps.get_current_active_user),
     db: Session = Depends(get_db),
-) -> None:
+):
     """Delete a recurring scan schedule."""
     schedule = schedule_service.get_schedule(db, schedule_id, current_user)
     if schedule is None:

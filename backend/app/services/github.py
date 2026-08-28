@@ -100,31 +100,52 @@ def fetch_github_user(access_token: str) -> dict[str, Any]:
     }
 
 
-def list_user_repositories(access_token: str) -> list[dict[str, Any]]:
-    """List repositories the authenticated user can access.
+# GitHub caps page size at 100. The page ceiling bounds a pathological account
+# (and our own latency) rather than any real limit — 20 pages is 2,000 repos.
+_REPOS_PER_PAGE = 100
+_MAX_REPO_PAGES = 20
 
-    Returns the first page (up to 100, most-recently-updated first). Private
-    repos require the `repo` OAuth scope. Pagination is left for a later phase.
+
+def list_user_repositories(access_token: str) -> list[dict[str, Any]]:
+    """List every repository the authenticated user can access.
+
+    Paginates until GitHub returns a short page, so accounts with more than
+    100 repositories see all of them. Private repos require the `repo` OAuth
+    scope.
     """
     headers = {
         "Authorization": f"Bearer {access_token}",
         "Accept": "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
     }
+
+    repos: list[dict[str, Any]] = []
     try:
         with httpx.Client(timeout=_TIMEOUT) as client:
-            resp = client.get(
-                f"{GITHUB_API_BASE}/user/repos",
-                headers=headers,
-                params={"per_page": 100, "sort": "updated", "visibility": "all"},
-            )
+            for page in range(1, _MAX_REPO_PAGES + 1):
+                resp = client.get(
+                    f"{GITHUB_API_BASE}/user/repos",
+                    headers=headers,
+                    params={
+                        "per_page": _REPOS_PER_PAGE,
+                        "page": page,
+                        "sort": "updated",
+                        "visibility": "all",
+                    },
+                )
+                if resp.status_code != 200:
+                    raise GitHubOAuthError(
+                        f"Failed to list GitHub repositories (HTTP {resp.status_code})"
+                    )
+                batch = resp.json()
+                if not isinstance(batch, list) or not batch:
+                    break
+                repos.extend(batch)
+                # A short page means there is no next one.
+                if len(batch) < _REPOS_PER_PAGE:
+                    break
     except httpx.HTTPError as exc:
         raise GitHubOAuthError(f"Could not reach GitHub: {exc}") from exc
-
-    if resp.status_code != 200:
-        raise GitHubOAuthError(
-            f"Failed to list GitHub repositories (HTTP {resp.status_code})"
-        )
 
     return [
         {
@@ -134,8 +155,43 @@ def list_user_repositories(access_token: str) -> list[dict[str, Any]]:
             "private": repo.get("private", False),
             "description": repo.get("description"),
         }
-        for repo in resp.json()
+        for repo in repos
     ]
+
+
+def user_can_access_repository(access_token: str, github_repo_id: str) -> bool:
+    """Whether the token's owner can actually see ``github_repo_id``.
+
+    The connect endpoint takes a repo id from the client, so it has to be
+    checked server-side: without this a subscriber could point Aegis at any
+    public repository and launch an automated pentest against code they do
+    not own.
+    """
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    try:
+        with httpx.Client(timeout=_TIMEOUT) as client:
+            # /repositories/{id} resolves by id and honours the token's grants.
+            resp = client.get(
+                f"{GITHUB_API_BASE}/repositories/{github_repo_id}", headers=headers
+            )
+    except httpx.HTTPError as exc:
+        raise GitHubOAuthError(f"Could not reach GitHub: {exc}") from exc
+
+    if resp.status_code in (404, 403):
+        return False
+    if resp.status_code != 200:
+        raise GitHubOAuthError(
+            f"Could not verify repository access (HTTP {resp.status_code})"
+        )
+
+    # Visible is not sufficient: any public repo is visible to any token. Require
+    # a push/admin grant, which only someone who can change the code will have.
+    permissions = resp.json().get("permissions") or {}
+    return bool(permissions.get("push") or permissions.get("admin"))
 
 
 def _fetch_primary_email(client: httpx.Client, headers: dict[str, str]) -> Optional[str]:

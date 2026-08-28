@@ -11,12 +11,14 @@ from app.models.enums import (
     ScanTrigger,
     Severity,
     SubscriptionTier,
+    TriageStatus,
 )
 from app.models.greybox import GreyboxConfig
 from app.models.installation import Installation
 from app.models.repository import Repository
 from app.models.scan import Scan
 from app.models.schedule import Schedule
+from app.models.triage import FindingTriage
 from app.models.user import User
 from app.models.vulnerability import Vulnerability
 
@@ -29,10 +31,12 @@ __all__ = [
     "Installation",
     "GreyboxConfig",
     "Vulnerability",
+    "FindingTriage",
     "SubscriptionTier",
     "ScanStatus",
     "ScanMode",
     "ScanFrequency",
     "ScanTrigger",
     "Severity",
+    "TriageStatus",
 ]

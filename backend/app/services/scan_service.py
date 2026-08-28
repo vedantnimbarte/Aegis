@@ -5,20 +5,30 @@ belong to a repository they own (tenant isolation, spec §5).
 """
 from __future__ import annotations
 
+import logging
 import uuid
+from datetime import datetime, timezone
 from typing import Optional, Sequence
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models.enums import ScanMode, ScanTrigger, Severity
+from app.models.enums import ScanMode, ScanStatus, ScanTrigger, Severity
 from app.models.repository import Repository
 from app.models.scan import Scan
 from app.models.user import User
 from app.models.vulnerability import Vulnerability
-from app.schemas.scan import ScanRead, ScanReport, VulnerabilityRead
-from app.services import repo_service
+from app.schemas.scan import (
+    ScanDiffRead,
+    ScanRead,
+    ScanReport,
+    VulnerabilityRead,
+)
+from app.services import repo_service, triage_service
+from app.workers.celery_app import celery
 from app.workers.tasks import run_strix_scan
+
+logger = logging.getLogger("aegis.scans")
 
 # Display/order rank for severities (critical first).
 _SEVERITY_RANK = {
@@ -96,6 +106,48 @@ def get_scan(db: Session, scan_id: uuid.UUID, user: User) -> Optional[Scan]:
     ).scalar_one_or_none()
 
 
+# Statuses a scan can still be stopped from.
+_CANCELABLE = (ScanStatus.PENDING, ScanStatus.RUNNING)
+
+
+def cancel_scan(db: Session, scan: Scan) -> bool:
+    """Stop an in-flight scan. Returns False if it had already finished.
+
+    Revoking with ``terminate`` kills the worker's Strix subprocess, which is
+    the point: an uncancellable run keeps spending against the LLM budget. The
+    row is marked canceled regardless of whether the broker acknowledges, so a
+    user is never stuck watching a scan they have already stopped.
+    """
+    if scan.status not in _CANCELABLE:
+        return False
+
+    if scan.celery_task_id:
+        try:
+            celery.control.revoke(
+                scan.celery_task_id, terminate=True, signal="SIGTERM"
+            )
+        except Exception:  # noqa: BLE001 - a dead broker must not block the UI
+            logger.warning(
+                "Could not revoke task %s for scan %s", scan.celery_task_id, scan.id,
+                exc_info=True,
+            )
+
+    scan.status = ScanStatus.CANCELED
+    scan.completed_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(scan)
+    return True
+
+
+def get_finding(db: Session, scan: Scan, vulnerability_id: uuid.UUID):
+    """Fetch one finding, scoped to a scan the caller already owns."""
+    return db.execute(
+        select(Vulnerability).where(
+            Vulnerability.id == vulnerability_id, Vulnerability.scan_id == scan.id
+        )
+    ).scalar_one_or_none()
+
+
 def build_report(
     db: Session, scan_id: uuid.UUID, user: User
 ) -> Optional[ScanReport]:
@@ -114,10 +166,38 @@ def build_report(
     for v in vulns:
         counts[v.severity.value] += 1
 
+    # Triage verdicts live per (repo, fingerprint) so they survive re-scans,
+    # and the diff marks what this run turned up that the last one didn't.
+    triage = triage_service.triage_map(db, scan.repository_id)
+    diff = triage_service.diff_against_previous(db, scan)
+
+    findings: list[VulnerabilityRead] = []
+    suppressed = 0
+    for v in vulns:
+        read = VulnerabilityRead.model_validate(v)
+        verdict = triage.get(v.fingerprint) if v.fingerprint else None
+        if verdict is not None:
+            read.triage_status = verdict.status.value
+            read.triage_note = verdict.note
+            read.github_issue_url = verdict.github_issue_url
+            if verdict.status in triage_service.SUPPRESSED_STATUSES:
+                suppressed += 1
+        read.is_new = bool(v.fingerprint and v.fingerprint in diff.new_fingerprints)
+        findings.append(read)
+
     return ScanReport(
         scan=ScanRead.model_validate(scan),
         total=len(vulns),
         counts_by_severity=counts,
         fixable_count=sum(1 for v in vulns if v.suggested_fix),
-        vulnerabilities=[VulnerabilityRead.model_validate(v) for v in vulns],
+        open_count=len(vulns) - suppressed,
+        suppressed_count=suppressed,
+        diff=ScanDiffRead(
+            has_baseline=diff.has_baseline,
+            previous_scan_id=diff.previous_scan_id,
+            new_count=len(diff.new_fingerprints),
+            fixed_count=diff.fixed_count,
+            persisting_count=diff.persisting_count,
+        ),
+        vulnerabilities=findings,
     )

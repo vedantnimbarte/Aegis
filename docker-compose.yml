@@ -1,5 +1,11 @@
 # Local development stack for Aegis.
 #   docker compose up --build
+# In-network hostnames. backend/.env points at localhost (correct when running
+# the API straight on the host), which doesn't resolve from inside a container.
+x-service-hosts: &service-hosts
+  DATABASE_URL: postgresql+psycopg://aegis:aegis@db:5432/aegis
+  REDIS_URL: redis://redis:6379/0
+
 services:
   db:
     image: postgres:16-alpine
@@ -25,6 +31,18 @@ services:
   api:
     build: ./backend
     env_file: ./backend/.env
+    # Dev-only reload on host edits; the image's CMD stays reload-free so the
+    # same Dockerfile is deployable. Watching just the app package keeps the
+    # poller off alembic/ and tests/, which the server never imports.
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir app
+    environment:
+      <<: *service-hosts
+      # Must match the worker's path: the API reads Strix's live run state
+      # from the same shared volume to serve /scans/{id}/progress.
+      STRIX_WORK_DIR: /var/aegis-scans
+      # Same reason as the dashboard: inotify events don't cross the Windows
+      # bind mount, so uvicorn's watcher never sees host edits. Poll instead.
+      WATCHFILES_FORCE_POLLING: "true"
     ports:
       - "8000:8000"
     depends_on:
@@ -34,6 +52,8 @@ services:
         condition: service_started
     volumes:
       - ./backend:/app
+      # Read-only: the API only ever reads progress state, never writes scans.
+      - scandata:/var/aegis-scans:ro
 
   worker:
     build:
@@ -45,9 +65,22 @@ services:
     command: celery -A app.workers.celery_app.celery worker --loglevel=info -E
     env_file: ./backend/.env
     environment:
+      <<: *service-hosts
       # Strix spawns its sandbox containers on the isolated dind daemon rather
       # than the host socket, so an escape can't reach the host's Docker/root.
-      DOCKER_HOST: tcp://dind:2375
+      # Reached over loopback because this service shares dind's network
+      # namespace (see network_mode below).
+      DOCKER_HOST: tcp://127.0.0.1:2375
+      # Must match the scandata mount path below *and* in dind: Strix passes
+      # this path to the remote daemon as a bind source, so it has to resolve
+      # identically on both sides.
+      STRIX_WORK_DIR: /var/aegis-scans
+    # Share dind's network namespace. Strix resolves a sandbox's Caido port to
+    # the address the *daemon* published it on (127.0.0.1 inside dind); without
+    # a shared stack the worker's own loopback has nothing listening and the
+    # bootstrap fails with InstanceNotReadyError. dind itself sits on the
+    # default compose network, so db/redis still resolve by name from here.
+    network_mode: "service:dind"
     depends_on:
       - api
       - redis
@@ -55,7 +88,9 @@ services:
     volumes:
       - ./backend:/app
       # Shared with dind so Strix's bind-mounts of the checkout resolve in both.
-      - scandata:/tmp/aegis-scans
+      # NOT under /tmp: dind mounts a tmpfs over /tmp at startup, which would
+      # shadow this volume and make every bind source invalid (400 on create).
+      - scandata:/var/aegis-scans
 
   # Isolated Docker daemon for Strix's sandbox containers (see SECURITY.md).
   # Running untrusted target code here contains a breakout to this container
@@ -68,13 +103,14 @@ services:
     environment:
       DOCKER_TLS_CERTDIR: ""   # plain TCP on the internal network only
     volumes:
-      - scandata:/tmp/aegis-scans
+      - scandata:/var/aegis-scans
 
   # Celery Beat — ticks periodically and dispatches due recurring scans.
   beat:
     build: ./backend
     command: celery -A app.workers.celery_app.celery beat --loglevel=info
     env_file: ./backend/.env
+    environment: *service-hosts
     depends_on:
       - redis
       - db
@@ -87,13 +123,27 @@ services:
     image: node:20-slim
     working_dir: /app
     command: sh -c "npm install && npm run dev -- -H 0.0.0.0"
+    # next dev exits cleanly on stdin EOF, which is what it gets under
+    # `compose up -d`. Keep stdin open so the dev server stays alive.
+    stdin_open: true
+    tty: true
     environment:
       NEXT_PUBLIC_API_BASE_URL: http://localhost:8000/api/v1
+      # Enables the "Sign in with GitHub" button; must match the App's client id.
+      NEXT_PUBLIC_GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
+      NEXT_PUBLIC_GITHUB_REDIRECT_URI: http://localhost:3001/auth/callback
+      # inotify events don't cross the Windows bind mount, so Next's watcher
+      # never sees host edits and silently serves a stale bundle. Poll instead.
+      WATCHPACK_POLLING: "true"
+      CHOKIDAR_USEPOLLING: "true"
     ports:
       - "3001:3001"
     volumes:
       - ./dashboard:/app
       - dashboard_node_modules:/app/node_modules
+      # Keep the build cache off the Windows bind mount — next dev writes it
+      # constantly, and a host-built .next is not portable into the container.
+      - dashboard_next:/app/.next
     depends_on:
       - api
 
@@ -137,6 +187,7 @@ services:
 volumes:
   pgdata:
   dashboard_node_modules:
+  dashboard_next:
   promdata:
   grafanadata:
   scandata:

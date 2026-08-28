@@ -93,6 +93,10 @@ def send_password_reset_email(to: str, reset_url: str) -> None:
     send_email(to, subject, text, html)
 
 
+# Heading wording per terminal scan status.
+_STATUS_HEADING = {"completed": "complete", "canceled": "canceled", "failed": "failed"}
+
+
 def send_scan_complete_email(
     to: str,
     *,
@@ -102,7 +106,7 @@ def send_scan_complete_email(
     counts: dict[str, int],
     report_url: str,
 ) -> None:
-    """Notify the repo owner that a scan finished (completed or failed)."""
+    """Notify the repo owner that a scan finished (completed, canceled, or failed)."""
     if status == "completed":
         if total == 0:
             subject = f"Aegis scan complete: {repo_name} — all clear"
@@ -114,6 +118,9 @@ def send_scan_complete_email(
                 f"Aegis found {total} {noun} in {repo_name} "
                 f"({severity_breakdown(counts)})."
             )
+    elif status == "canceled":
+        subject = f"Aegis scan canceled: {repo_name}"
+        summary = f"The Aegis scan for {repo_name} was canceled before it finished."
     else:
         subject = f"Aegis scan failed: {repo_name}"
         summary = f"The Aegis scan for {repo_name} did not complete."
@@ -121,7 +128,7 @@ def send_scan_complete_email(
     text = f"{summary}\n\nView the full report:\n{report_url}\n"
     html = (
         f'<div style="font-family:system-ui,sans-serif;line-height:1.5;color:#111">'
-        f'<h2 style="margin:0 0 12px">Scan {"complete" if status == "completed" else "failed"}</h2>'
+        f'<h2 style="margin:0 0 12px">Scan {_STATUS_HEADING.get(status, "failed")}</h2>'
         f"<p>{summary}</p>"
         f'<p><a href="{report_url}" style="display:inline-block;background:#22D3EE;'
         f'color:#07090E;font-weight:600;text-decoration:none;padding:10px 18px;'

@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING, List, Optional
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import BigInteger, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -61,6 +61,14 @@ class Scan(UUIDMixin, TimestampMixin, Base):
     celery_task_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     # Populated when status == FAILED.
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # LLM usage for this run, captured from Strix's run.json on completion.
+    # Persisted because the run directory is deleted after ingest, and margin
+    # per scan is only knowable if we keep it.
+    cost_usd: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    llm_requests: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    input_tokens: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    output_tokens: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
     # URL of the auto-fix pull request, once generated.
     autofix_pr_url: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)
 

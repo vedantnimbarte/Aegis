@@ -18,11 +18,14 @@ import type {
   Scan,
   ScanFrequency,
   ScanMode,
+  ScanProgress,
   ScanReport,
   Schedule,
   SubscriptionTier,
   Token,
+  TriageStatus,
   User,
+  Vulnerability,
 } from "./types";
 
 const BASE_URL =
@@ -227,6 +230,22 @@ export const api = {
   }) => request<Scan>("/scans", { method: "POST", body }),
   getScan: (id: string) => request<Scan>(`/scans/${id}`),
   getReport: (id: string) => request<ScanReport>(`/scans/${id}/report`),
+  getScanProgress: (id: string) => request<ScanProgress>(`/scans/${id}/progress`),
+  cancelScan: (id: string) => request<Scan>(`/scans/${id}/cancel`, { method: "POST" }),
+  triageFinding: (
+    scanId: string,
+    findingId: string,
+    body: { status: TriageStatus; note?: string | null }
+  ) =>
+    request<Vulnerability>(`/scans/${scanId}/findings/${findingId}/triage`, {
+      method: "PATCH",
+      body,
+    }),
+  createFindingIssue: (scanId: string, findingId: string) =>
+    request<{ issue_url: string; created: boolean }>(
+      `/scans/${scanId}/findings/${findingId}/issue`,
+      { method: "POST" }
+    ),
   getReportPdf: (id: string) => requestBlob(`/scans/${id}/report.pdf`),
   generateFixPr: (id: string) =>
     request<{ pull_request_url: string }>(`/scans/${id}/autofix`, { method: "POST" }),
