@@ -7,11 +7,11 @@ import {
   LayoutDashboard,
   GitBranch,
   Radar,
-  ShieldHalf,
   LogOut,
   CreditCard,
   Settings,
 } from "lucide-react";
+import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
@@ -20,12 +20,13 @@ import { useAuth } from "@/lib/auth";
 import { cn } from "./ui";
 import { VerifyEmailBanner } from "./VerifyEmailBanner";
 
+// `short` is the tab-bar label — the sidebar has room for the full wording.
 const NAV = [
-  { href: "/", label: "Overview", icon: LayoutDashboard, exact: true },
-  { href: "/repos", label: "Repositories", icon: GitBranch, exact: false },
-  { href: "/scans", label: "Scans", icon: Radar, exact: false },
-  { href: "/billing", label: "Billing", icon: CreditCard, exact: false },
-  { href: "/settings", label: "Settings", icon: Settings, exact: false },
+  { href: "/", label: "Overview", short: "Overview", icon: LayoutDashboard, exact: true },
+  { href: "/repos", label: "Repositories", short: "Repos", icon: GitBranch, exact: false },
+  { href: "/scans", label: "Scans", short: "Scans", icon: Radar, exact: false },
+  { href: "/billing", label: "Billing", short: "Billing", icon: CreditCard, exact: false },
+  { href: "/settings", label: "Settings", short: "Settings", icon: Settings, exact: false },
 ];
 
 export function AppShell({ children }: { children: ReactNode }) {
@@ -40,8 +41,8 @@ export function AppShell({ children }: { children: ReactNode }) {
       {/* Sidebar */}
       <aside className="fixed inset-y-0 left-0 z-20 hidden w-60 flex-col border-r border-line bg-ink/80 backdrop-blur lg:flex">
         <Link href="/" className="flex items-center gap-2.5 px-5 py-5">
-          <span className="grid h-8 w-8 place-items-center rounded-lg border border-cyan/40 bg-cyan/10 text-cyan-soft">
-            <ShieldHalf className="h-4 w-4" strokeWidth={2} />
+          <span className="grid h-8 w-8 place-items-center rounded-lg border border-cyan/40 bg-cyan/10">
+            <Image src="/logo.png" alt="" width={20} height={20} priority />
           </span>
           <span className="font-display text-[15px] font-semibold tracking-tight text-fg">
             Aegis
@@ -93,40 +94,56 @@ export function AppShell({ children }: { children: ReactNode }) {
         </div>
       </aside>
 
-      {/* Mobile top bar */}
+      {/* Mobile top bar — identity and sign-out only; navigation lives in the
+          bottom tab bar, where the labels fit and the targets are reachable. */}
       <div className="fixed inset-x-0 top-0 z-20 flex items-center justify-between border-b border-line bg-ink/90 px-4 py-3 backdrop-blur lg:hidden">
         <Link href="/" className="flex items-center gap-2">
-          <span className="grid h-7 w-7 place-items-center rounded-lg border border-cyan/40 bg-cyan/10 text-cyan-soft">
-            <ShieldHalf className="h-3.5 w-3.5" strokeWidth={2} />
+          <span className="grid h-7 w-7 place-items-center rounded-lg border border-cyan/40 bg-cyan/10">
+            <Image src="/logo.png" alt="" width={18} height={18} priority />
           </span>
           <span className="font-display text-sm font-semibold text-fg">Aegis</span>
         </Link>
-        <nav className="flex items-center gap-1">
-          {NAV.map(({ href, label, icon: Icon, exact }) => (
+        <div className="flex items-center gap-2">
+          <span className="max-w-[9rem] truncate font-mono text-[11px] text-faint">
+            {user?.github_username ?? user?.email ?? ""}
+          </span>
+          <button
+            onClick={logout}
+            aria-label="Sign out"
+            className="grid h-9 w-9 place-items-center rounded-lg text-faint transition-colors hover:text-danger"
+          >
+            <LogOut className="h-4 w-4" strokeWidth={2} />
+          </button>
+        </div>
+      </div>
+
+      {/* Mobile bottom tab bar */}
+      <nav
+        aria-label="Main"
+        className="fixed inset-x-0 bottom-0 z-20 flex border-t border-line bg-ink/95 pb-[env(safe-area-inset-bottom)] backdrop-blur lg:hidden"
+      >
+        {NAV.map(({ href, label, short, icon: Icon, exact }) => {
+          const active = isActive(href, exact);
+          return (
             <Link
               key={href}
               href={href}
               aria-label={label}
+              aria-current={active ? "page" : undefined}
               className={cn(
-                "grid h-9 w-9 place-items-center rounded-lg transition-colors",
-                isActive(href, exact) ? "bg-cyan/10 text-cyan-soft" : "text-muted hover:text-fg"
+                "flex flex-1 flex-col items-center gap-1 px-1 py-2.5 transition-colors",
+                active ? "text-cyan-soft" : "text-muted"
               )}
             >
-              <Icon className="h-4 w-4" strokeWidth={2} />
+              <Icon className="h-[18px] w-[18px]" strokeWidth={2} />
+              <span className="text-[10px] font-medium leading-none">{short}</span>
             </Link>
-          ))}
-          <button
-            onClick={logout}
-            aria-label="Sign out"
-            className="grid h-9 w-9 place-items-center rounded-lg text-faint hover:text-danger"
-          >
-            <LogOut className="h-4 w-4" strokeWidth={2} />
-          </button>
-        </nav>
-      </div>
+          );
+        })}
+      </nav>
 
       {/* Main content */}
-      <main className="flex-1 px-5 pb-16 pt-20 sm:px-8 lg:ml-60 lg:pt-10">
+      <main className="flex-1 px-5 pb-28 pt-20 sm:px-8 lg:ml-60 lg:pb-16 lg:pt-10">
         <div className="mx-auto max-w-5xl">
           <VerifyEmailBanner />
           {children}

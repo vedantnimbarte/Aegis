@@ -1,7 +1,8 @@
 "use client";
 
 import { useMutation } from "@tanstack/react-query";
-import { Github, Lock, Mail, ShieldHalf } from "lucide-react";
+import { Github, Lock, Mail } from "lucide-react";
+import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
@@ -90,8 +91,8 @@ export default function LoginPage() {
 
       <div className="relative z-10 w-full max-w-sm">
         <div className="mb-8 flex flex-col items-center text-center">
-          <span className="mb-5 grid h-12 w-12 place-items-center rounded-xl border border-cyan/40 bg-cyan/10 text-cyan-soft">
-            <ShieldHalf className="h-6 w-6" strokeWidth={2} />
+          <span className="mb-5 grid h-12 w-12 place-items-center rounded-xl border border-cyan/40 bg-cyan/10">
+            <Image src="/logo.png" alt="Aegis" width={30} height={30} priority />
           </span>
           <h1 className="font-display text-2xl font-bold tracking-tight text-fg">
             {mode === "signin" ? "Sign in to Aegis" : "Create your account"}
