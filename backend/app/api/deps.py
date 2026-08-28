@@ -224,10 +224,11 @@ def ensure_can_scan(principal: Principal, db: Session) -> None:
     A human must have verified their email and accepted the scan terms. An API
     token inherits the attestation from the organization's billing user — CI
     cannot click a checkbox, and the person who issued the token already did.
+    Email verification is skipped for a token for the same reason: it proves a
+    human's address, which a pipeline does not have.
     """
-    user = principal.user or billing_user_for(db, principal)
     if principal.user is not None:
-        ensure_email_verified(user)
-    ensure_scan_authorized(
-        principal.user if principal.user is not None else billing_user_for(db, principal)
-    )
+        ensure_email_verified(principal.user)
+        ensure_scan_authorized(principal.user)
+        return
+    ensure_scan_authorized(billing_user_for(db, principal))
