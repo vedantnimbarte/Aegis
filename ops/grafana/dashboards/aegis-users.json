@@ -5,7 +5,7 @@
   "timezone": "browser",
   "schemaVersion": 39,
   "_comment": "Bump `version` on every edit — Grafana's file provisioner ignores a changed dashboard whose version did not increase.",
-  "version": 2,
+  "version": 3,
   "refresh": "5m",
   "time": { "from": "now-90d", "to": "now" },
   "panels": [
@@ -411,6 +411,92 @@
           "rawQuery": true,
           "editorMode": "code",
           "rawSql": "SELECT o.name AS org,\n       (SELECT count(*) FROM org_memberships m WHERE m.organization_id = o.id) AS members,\n       (SELECT count(*) FROM targets t WHERE t.organization_id = o.id) AS targets,\n       count(s.id) AS scans,\n       coalesce(sum(s.cost_usd), 0) AS spend\nFROM organizations o\nLEFT JOIN targets t ON t.organization_id = o.id\nLEFT JOIN scans s ON s.target_id = t.id AND s.created_at > now() - interval '30 days'\nGROUP BY o.id, o.name\nORDER BY scans DESC, spend DESC\nLIMIT 20"
+        }
+      ]
+    },
+
+    { "id": 104, "type": "row", "title": "Funnel & retention", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 72 }, "collapsed": false, "panels": [] },
+    {
+      "id": 40,
+      "title": "Activation funnel",
+      "type": "barchart",
+      "datasource": { "type": "postgres", "uid": "aegisdb" },
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 73 },
+      "description": "Every stage is measured against all accounts ever created, so this is lifetime reach per step, not a per-cohort conversion. Scans started with an API token have no user attached and do not count toward the last two stages.",
+      "options": { "xTickLabelRotation": -30, "showValue": "always", "legend": { "showLegend": false } },
+      "fieldConfig": { "defaults": { "custom": { "fillOpacity": 80 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "SELECT s.stage, s.users\nFROM (VALUES\n  (1, 'signed up',      (SELECT count(*) FROM users)),\n  (2, 'verified email', (SELECT count(*) FROM users WHERE email_verified)),\n  (3, 'accepted terms', (SELECT count(*) FROM users WHERE scan_terms_accepted_at IS NOT NULL)),\n  (4, 'connected git',  (SELECT count(*) FROM users WHERE github_token IS NOT NULL OR gitlab_token IS NOT NULL OR bitbucket_token IS NOT NULL)),\n  (5, 'added a target', (SELECT count(DISTINCT created_by_user_id) FROM targets)),\n  (6, 'ran a scan',     (SELECT count(DISTINCT created_by_user_id) FROM scans)),\n  (7, 'ran 2+ scans',   (SELECT count(*) FROM (SELECT created_by_user_id FROM scans WHERE created_by_user_id IS NOT NULL GROUP BY 1 HAVING count(*) > 1) m))\n) AS s(ord, stage, users)\nORDER BY s.ord"
+        }
+      ]
+    },
+    {
+      "id": 41,
+      "title": "Where signups fall out",
+      "type": "table",
+      "datasource": { "type": "postgres", "uid": "aegisdb" },
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 73 },
+      "description": "The largest 'lost here' is the one worth fixing first.",
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "of signups" }, "properties": [{ "id": "unit", "value": "percentunit" }, { "id": "decimals", "value": 1 }] },
+          {
+            "matcher": { "id": "byName", "options": "lost here" },
+            "properties": [
+              { "id": "unit", "value": "percentunit" },
+              { "id": "decimals", "value": 1 },
+              { "id": "custom.cellOptions", "value": { "type": "color-background", "mode": "gradient" } },
+              { "id": "color", "value": { "mode": "continuous-YlRd" } }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "WITH t AS (SELECT greatest(count(*), 1)::float AS total FROM users)\nSELECT s.stage, s.users,\n       s.users / t.total AS \"of signups\",\n       1 - s.users::float / nullif(lag(s.users) OVER (ORDER BY s.ord), 0) AS \"lost here\"\nFROM t, (VALUES\n  (1, 'signed up',      (SELECT count(*) FROM users)),\n  (2, 'verified email', (SELECT count(*) FROM users WHERE email_verified)),\n  (3, 'accepted terms', (SELECT count(*) FROM users WHERE scan_terms_accepted_at IS NOT NULL)),\n  (4, 'connected git',  (SELECT count(*) FROM users WHERE github_token IS NOT NULL OR gitlab_token IS NOT NULL OR bitbucket_token IS NOT NULL)),\n  (5, 'added a target', (SELECT count(DISTINCT created_by_user_id) FROM targets)),\n  (6, 'ran a scan',     (SELECT count(DISTINCT created_by_user_id) FROM scans)),\n  (7, 'ran 2+ scans',   (SELECT count(*) FROM (SELECT created_by_user_id FROM scans WHERE created_by_user_id IS NOT NULL GROUP BY 1 HAVING count(*) > 1) m))\n) AS s(ord, stage, users)\nORDER BY s.ord"
+        }
+      ]
+    },
+    {
+      "id": 42,
+      "title": "Weekly retention cohorts",
+      "type": "table",
+      "datasource": { "type": "postgres", "uid": "aegisdb" },
+      "gridPos": { "h": 11, "w": 24, "x": 0, "y": 82 },
+      "description": "Each row is the week a set of accounts signed up; W0..W7 is the share of that cohort seen doing something in the audit log that many weeks later. Sign-ins are audited from 0016 onward — cohorts older than that only show people who changed something, so early rows read low.",
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": { "id": "byRegexp", "options": "W[0-7]" },
+            "properties": [
+              { "id": "unit", "value": "percentunit" },
+              { "id": "decimals", "value": 0 },
+              { "id": "custom.cellOptions", "value": { "type": "color-background", "mode": "gradient" } },
+              { "id": "color", "value": { "mode": "continuous-BlPu" } },
+              { "id": "max", "value": 1 },
+              { "id": "min", "value": 0 }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "WITH c AS (\n  SELECT id, date_trunc('week', created_at) AS cohort_week FROM users\n),\na AS (\n  SELECT DISTINCT c.id, c.cohort_week,\n         (floor(extract(epoch FROM date_trunc('week', e.created_at) - c.cohort_week) / 604800))::int AS wk\n  FROM c\n  JOIN audit_events e ON e.actor_user_id = c.id\n)\nSELECT to_char(c.cohort_week, 'YYYY-MM-DD') AS cohort,\n       count(DISTINCT c.id) AS signups,\n       count(DISTINCT a.id) FILTER (WHERE a.wk = 0)::float / count(DISTINCT c.id) AS \"W0\",\n       count(DISTINCT a.id) FILTER (WHERE a.wk = 1)::float / count(DISTINCT c.id) AS \"W1\",\n       count(DISTINCT a.id) FILTER (WHERE a.wk = 2)::float / count(DISTINCT c.id) AS \"W2\",\n       count(DISTINCT a.id) FILTER (WHERE a.wk = 3)::float / count(DISTINCT c.id) AS \"W3\",\n       count(DISTINCT a.id) FILTER (WHERE a.wk = 4)::float / count(DISTINCT c.id) AS \"W4\",\n       count(DISTINCT a.id) FILTER (WHERE a.wk = 5)::float / count(DISTINCT c.id) AS \"W5\",\n       count(DISTINCT a.id) FILTER (WHERE a.wk = 6)::float / count(DISTINCT c.id) AS \"W6\",\n       count(DISTINCT a.id) FILTER (WHERE a.wk = 7)::float / count(DISTINCT c.id) AS \"W7\"\nFROM c\nLEFT JOIN a ON a.id = c.id\nGROUP BY c.cohort_week\nORDER BY c.cohort_week DESC\nLIMIT 12"
         }
       ]
     }
