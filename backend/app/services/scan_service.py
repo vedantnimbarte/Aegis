@@ -7,8 +7,9 @@ from __future__ import annotations
 
 import logging
 import uuid
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Optional, Sequence
+from typing import Iterable, Optional, Sequence
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -16,9 +17,11 @@ from sqlalchemy.orm import Session
 from app.models.enums import ScanMode, ScanStatus, ScanTrigger, Severity
 from app.models.repository import Repository
 from app.models.scan import Scan
+from app.models.triage import FindingTriage
 from app.models.user import User
 from app.models.vulnerability import Vulnerability
 from app.schemas.scan import (
+    DashboardSummary,
     ScanDiffRead,
     ScanRead,
     ScanReport,
@@ -87,14 +90,180 @@ def create_scan(
     return scan
 
 
+@dataclass
+class FindingCounts:
+    """A scan's findings, split into what still needs attention and what doesn't."""
+
+    counts_by_severity: dict[str, int] = field(
+        default_factory=lambda: {sev.value: 0 for sev in Severity}
+    )
+    total: int = 0
+    suppressed: int = 0
+
+
+def summarize_findings(
+    rows: Iterable[tuple[uuid.UUID, uuid.UUID, Severity, Optional[str]]],
+    suppressed_keys: frozenset[tuple[uuid.UUID, Optional[str]]],
+) -> dict[uuid.UUID, FindingCounts]:
+    """Group ``(scan_id, repository_id, severity, fingerprint)`` rows per scan.
+
+    ``counts_by_severity`` deliberately excludes findings a human has triaged
+    away, so a list row shows what is still outstanding rather than what was
+    once reported; ``total`` counts everything, so the difference is what was
+    triaged away. Pure, so it can be exercised without a database.
+    """
+    out: dict[uuid.UUID, FindingCounts] = {}
+    for scan_id, repository_id, severity, fingerprint in rows:
+        summary = out.setdefault(scan_id, FindingCounts())
+        summary.total += 1
+        if (repository_id, fingerprint) in suppressed_keys:
+            summary.suppressed += 1
+        else:
+            key = severity.value if isinstance(severity, Severity) else str(severity)
+            summary.counts_by_severity[key] = summary.counts_by_severity.get(key, 0) + 1
+    return out
+
+
+def _suppressed_keys(
+    db: Session, repository_ids: Sequence[uuid.UUID]
+) -> frozenset[tuple[uuid.UUID, Optional[str]]]:
+    """``(repository_id, fingerprint)`` pairs a human marked as needing no action."""
+    if not repository_ids:
+        return frozenset()
+    rows = db.execute(
+        select(FindingTriage.repository_id, FindingTriage.fingerprint).where(
+            FindingTriage.repository_id.in_(repository_ids),
+            FindingTriage.status.in_(tuple(triage_service.SUPPRESSED_STATUSES)),
+        )
+    ).all()
+    return frozenset((repo_id, fp) for repo_id, fp in rows)
+
+
+def finding_counts(db: Session, scans: Sequence[Scan]) -> dict[uuid.UUID, FindingCounts]:
+    """Severity counts for each of ``scans``, in two queries regardless of size.
+
+    Only the columns needed for counting are selected — pulling whole
+    ``Vulnerability`` rows (descriptions, PoC code, remediation markdown) just
+    to add them up is what made the old client-side aggregate expensive.
+    """
+    scan_ids = [s.id for s in scans]
+    if not scan_ids:
+        return {}
+
+    rows = db.execute(
+        select(
+            Vulnerability.scan_id,
+            Scan.repository_id,
+            Vulnerability.severity,
+            Vulnerability.fingerprint,
+        )
+        .join(Scan, Scan.id == Vulnerability.scan_id)
+        .where(Vulnerability.scan_id.in_(scan_ids))
+    ).all()
+
+    counts = summarize_findings(
+        rows, _suppressed_keys(db, list({s.repository_id for s in scans}))
+    )
+    # A scan with no findings still gets a zeroed summary, so the UI can tell
+    # "clean" apart from "not computed".
+    for scan in scans:
+        counts.setdefault(scan.id, FindingCounts())
+    return counts
+
+
 def list_scans(
     db: Session, user: User, repository_id: Optional[uuid.UUID] = None
-) -> Sequence[Scan]:
+) -> list[ScanRead]:
+    """Scan history, newest first, each row carrying its finding summary."""
     stmt = select(Scan).join(Repository).where(Repository.user_id == user.id)
     if repository_id is not None:
         stmt = stmt.where(Scan.repository_id == repository_id)
     stmt = stmt.order_by(Scan.created_at.desc())
-    return db.execute(stmt).scalars().all()
+    scans = list(db.execute(stmt).scalars().all())
+
+    counts = finding_counts(db, scans)
+    out: list[ScanRead] = []
+    for scan in scans:
+        read = ScanRead.model_validate(scan)
+        # Only a finished scan has a meaningful count; leaving it null while a
+        # scan runs stops the UI rendering a premature "0 findings".
+        if scan.status is ScanStatus.COMPLETED:
+            summary = counts[scan.id]
+            read.counts_by_severity = summary.counts_by_severity
+            read.findings_total = summary.total
+        out.append(read)
+    return out
+
+
+def latest_completed_scans(db: Session, user: User) -> list[Scan]:
+    """The most recent completed scan of each repository the user owns.
+
+    This is the portfolio's *current* state. Summing every scan's report
+    instead would count one unfixed vulnerability once per re-scan.
+    """
+    rows = (
+        db.execute(
+            select(Scan)
+            .join(Repository)
+            .where(Repository.user_id == user.id, Scan.status == ScanStatus.COMPLETED)
+            .order_by(Scan.created_at.desc())
+        )
+        .scalars()
+        .all()
+    )
+
+    seen: set[uuid.UUID] = set()
+    latest: list[Scan] = []
+    for scan in rows:
+        if scan.repository_id in seen:
+            continue
+        seen.add(scan.repository_id)
+        latest.append(scan)
+    return latest
+
+
+def dashboard_summary(db: Session, user: User) -> DashboardSummary:
+    """Aggregate the overview page's headline numbers in one round trip."""
+    status_rows = db.execute(
+        select(Scan.status, Scan.created_at)
+        .join(Repository)
+        .where(Repository.user_id == user.id)
+    ).all()
+    connected_repos = (
+        db.execute(select(Repository.id).where(Repository.user_id == user.id))
+        .scalars()
+        .all()
+    )
+
+    running = sum(
+        1
+        for status, _ in status_rows
+        if status in (ScanStatus.PENDING, ScanStatus.RUNNING)
+    )
+    last_scan_at = max((created for _, created in status_rows), default=None)
+
+    latest = latest_completed_scans(db, user)
+    counts = finding_counts(db, latest)
+
+    totals = {sev.value: 0 for sev in Severity}
+    open_findings = 0
+    suppressed = 0
+    for summary in counts.values():
+        for sev, n in summary.counts_by_severity.items():
+            totals[sev] = totals.get(sev, 0) + n
+            open_findings += n
+        suppressed += summary.suppressed
+
+    return DashboardSummary(
+        total_scans=len(status_rows),
+        running_scans=running,
+        connected_repos=len(connected_repos),
+        scanned_repos=len(latest),
+        counts_by_severity=totals,
+        open_findings=open_findings,
+        suppressed_findings=suppressed,
+        last_scan_at=last_scan_at,
+    )
 
 
 def get_scan(db: Session, scan_id: uuid.UUID, user: User) -> Optional[Scan]:

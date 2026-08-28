@@ -17,20 +17,25 @@ import { useMemo, useState } from "react";
 import { NewScanDialog } from "@/components/NewScanDialog";
 import { ScheduleDialog } from "@/components/ScheduleDialog";
 import { GreyboxDialog } from "@/components/GreyboxDialog";
+import { useToast } from "@/components/Toast";
 import {
   Button,
   Card,
   EmptyState,
   ErrorState,
   PageHeader,
-  Spinner,
+  SeverityCountList,
+  Skeleton,
+  SkeletonList,
+  StatusBadge,
 } from "@/components/ui";
 import { api, ApiError } from "@/lib/api";
 import { formatDate, relativeTime } from "@/lib/format";
-import type { GitHubRepo, Repository, Schedule } from "@/lib/types";
+import type { GitHubRepo, Repository, Scan, Schedule } from "@/lib/types";
 
 export default function ReposPage() {
   const queryClient = useQueryClient();
+  const toast = useToast();
   const [scanRepoId, setScanRepoId] = useState<string | null>(null);
   const [scheduleTarget, setScheduleTarget] = useState<{
     repo: Repository;
@@ -45,6 +50,7 @@ export default function ReposPage() {
     retry: false,
   });
   const schedulesQuery = useQuery({ queryKey: ["schedules"], queryFn: api.listSchedules });
+  const scansQuery = useQuery({ queryKey: ["scans"], queryFn: () => api.listScans() });
 
   const connected = connectedQuery.data ?? [];
   const connectedKeys = useMemo(
@@ -55,14 +61,24 @@ export default function ReposPage() {
     () => new Map((schedulesQuery.data ?? []).map((s) => [s.repository_id, s])),
     [schedulesQuery.data]
   );
+  // Scans arrive newest first, so the first hit per repo is the latest one.
+  const latestScanByRepo = useMemo(() => {
+    const map = new Map<string, Scan>();
+    for (const scan of scansQuery.data ?? []) {
+      if (!map.has(scan.repository_id)) map.set(scan.repository_id, scan);
+    }
+    return map;
+  }, [scansQuery.data]);
 
   const connectMutation = useMutation({
     mutationFn: (repo: GitHubRepo) =>
       api.syncRepo({ github_repo_id: repo.github_repo_id, name: repo.name, url: repo.url }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["repos"] }),
+    onSuccess: (_data, repo) => {
+      queryClient.invalidateQueries({ queryKey: ["repos"] });
+      toast.success(`Connected ${repo.name}.`);
+    },
+    onError: (err) => toast.fromError(err, "Could not connect that repository."),
   });
-
-  if (connectedQuery.isLoading) return <Spinner label="Loading repositories…" />;
 
   const available = (availableQuery.data ?? []).filter((r) => !connectedKeys.has(r.github_repo_id));
 
@@ -76,7 +92,17 @@ export default function ReposPage() {
       {/* Connected */}
       <section>
         <h2 className="mb-4 font-display text-[15px] font-semibold text-fg">Connected</h2>
-        {connected.length === 0 ? (
+        {connectedQuery.isLoading ? (
+          <div className="grid gap-3 sm:grid-cols-2">
+            {Array.from({ length: 2 }, (_, i) => (
+              <Card key={i} className="space-y-3 p-4">
+                <Skeleton className="h-4 w-1/2" />
+                <Skeleton className="h-2.5 w-1/3" />
+                <Skeleton className="h-9 w-full rounded-lg" />
+              </Card>
+            ))}
+          </div>
+        ) : connected.length === 0 ? (
           <EmptyState icon={GitBranch} title="No repositories connected">
             Connect one of your GitHub repositories below to start scanning.
           </EmptyState>
@@ -87,6 +113,7 @@ export default function ReposPage() {
                 key={repo.id}
                 repo={repo}
                 schedule={scheduleByRepo.get(repo.id) ?? null}
+                lastScan={latestScanByRepo.get(repo.id) ?? null}
                 onScan={() => setScanRepoId(repo.id)}
                 onSchedule={() =>
                   setScheduleTarget({
@@ -106,7 +133,7 @@ export default function ReposPage() {
         <h2 className="mb-4 font-display text-[15px] font-semibold text-fg">Available on GitHub</h2>
 
         {availableQuery.isLoading ? (
-          <Spinner label="Fetching your GitHub repositories…" />
+          <SkeletonList rows={4} />
         ) : availableQuery.error ? (
           <ErrorState message="Couldn't load your GitHub repositories. Reconnect your GitHub account or check the token scope." />
         ) : available.length === 0 ? (
@@ -179,12 +206,14 @@ export default function ReposPage() {
 function ConnectedCard({
   repo,
   schedule,
+  lastScan,
   onScan,
   onSchedule,
   onGreybox,
 }: {
   repo: Repository;
   schedule: Schedule | null;
+  lastScan: Scan | null;
   onScan: () => void;
   onSchedule: () => void;
   onGreybox: () => void;
@@ -208,6 +237,34 @@ function ConnectedCard({
           <p className="mt-0.5 text-[11px] text-faint">Connected {relativeTime(repo.created_at)}</p>
         </div>
       </div>
+
+      {/* The repository's current health — the reason the repo is connected at
+          all, and previously only visible by leaving this page. */}
+      {lastScan ? (
+        <Link
+          href={`/scans/${lastScan.id}`}
+          className="flex items-center gap-2 rounded-lg border border-line bg-ink px-3 py-2 transition-colors hover:border-cyan/30"
+        >
+          <div className="min-w-0 flex-1">
+            {lastScan.counts_by_severity ? (
+              <SeverityCountList
+                counts={lastScan.counts_by_severity}
+                emptyLabel="No findings"
+              />
+            ) : (
+              <span className="font-mono text-[11px] text-faint">No results yet</span>
+            )}
+            <p className="mt-0.5 text-[11px] text-faint">
+              Last scan {relativeTime(lastScan.created_at)}
+            </p>
+          </div>
+          <StatusBadge status={lastScan.status} />
+        </Link>
+      ) : (
+        <p className="rounded-lg border border-dashed border-line px-3 py-2 text-[11px] text-faint">
+          Never scanned
+        </p>
+      )}
 
       {schedule ? (
         <div className="flex items-center gap-2 rounded-lg border border-line bg-ink px-3 py-2 text-[11px]">

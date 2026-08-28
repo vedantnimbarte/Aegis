@@ -10,6 +10,7 @@ import {
 } from "./tokens";
 import type {
   BillingSummary,
+  DashboardSummary,
   GitHubAppInfo,
   GitHubRepo,
   GreyboxConfig,
@@ -217,6 +218,9 @@ export const api = {
   listAvailableRepos: () => request<GitHubRepo[]>("/repos/available"),
   syncRepo: (repo: { github_repo_id: string; name: string; url: string }) =>
     request<Repository>("/repos", { method: "POST", body: repo }),
+
+  // --- Overview ---
+  dashboardSummary: () => request<DashboardSummary>("/dashboard/summary"),
 
   // --- Scans ---
   listScans: (repositoryId?: string) =>
