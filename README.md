@@ -724,6 +724,17 @@ queue not draining, scan failure rate, Postgres connections, disk filling);
 they evaluate at `:9090/alerts` — routing them to Slack/PagerDuty needs an
 Alertmanager with your receiver, see the commented block in `prometheus.yml`.
 
+A second dashboard, **"Aegis Users & Platform"**, answers the product
+questions — registered accounts, who is active now, signups and daily actives
+over time, tier and subscription mix, activation rate, organizations, scan and
+finding volume, and LLM spend. It reads the application database directly
+through a provisioned `Aegis DB` datasource, so a new question is a SQL query
+rather than a new metric. Two things to know: `users.last_seen_at` (written at
+most once every five minutes per user) is what "active" means, since access
+tokens are stateless and there are no sessions to count; and beyond local, the
+datasource should point at a SELECT-only role — the SQL for one is in
+`ops/grafana/provisioning/datasources/postgres.yml`.
+
 **Operations & security** — see [OPERATIONS.md](OPERATIONS.md) for DB backup /
 restore and the migration-rollback runbook, and [SECURITY.md](SECURITY.md) for
 the sandbox isolation model and pre-launch hardening.

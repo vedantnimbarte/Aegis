@@ -1,0 +1,346 @@
+{
+  "uid": "aegis-users",
+  "title": "Aegis Users & Platform",
+  "tags": ["aegis", "product"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "_comment": "Bump `version` on every edit — Grafana's file provisioner ignores a changed dashboard whose version did not increase.",
+  "version": 1,
+  "refresh": "5m",
+  "time": { "from": "now-90d", "to": "now" },
+  "panels": [
+    { "id": 100, "type": "row", "title": "Accounts", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }, "collapsed": false, "panels": [] },
+    {
+      "id": 1,
+      "title": "Registered users",
+      "type": "stat",
+      "datasource": { "type": "postgres", "uid": "aegisdb" },
+      "gridPos": { "h": 4, "w": 3, "x": 0, "y": 1 },
+      "targets": [
+        { "refId": "A", "format": "table", "rawQuery": true, "editorMode": "code", "rawSql": "SELECT count(*) AS \"users\" FROM users" }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Active now (15m)",
+      "type": "stat",
+      "datasource": { "type": "postgres", "uid": "aegisdb" },
+      "gridPos": { "h": 4, "w": 3, "x": 3, "y": 1 },
+      "description": "Access tokens are stateless, so there is no session to count. This is users who made an authenticated request in the last 15 minutes — the honest version of 'signed in right now'.",
+      "fieldConfig": {
+        "defaults": { "thresholds": { "mode": "absolute", "steps": [{ "color": "text", "value": null }, { "color": "green", "value": 1 }] } },
+        "overrides": []
+      },
+      "targets": [
+        { "refId": "A", "format": "table", "rawQuery": true, "editorMode": "code", "rawSql": "SELECT count(*) AS \"active\" FROM users WHERE last_seen_at > now() - interval '15 minutes'" }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Active today",
+      "type": "stat",
+      "datasource": { "type": "postgres", "uid": "aegisdb" },
+      "gridPos": { "h": 4, "w": 3, "x": 6, "y": 1 },
+      "targets": [
+        { "refId": "A", "format": "table", "rawQuery": true, "editorMode": "code", "rawSql": "SELECT count(*) AS \"active\" FROM users WHERE last_seen_at > now() - interval '24 hours'" }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Active this month",
+      "type": "stat",
+      "datasource": { "type": "postgres", "uid": "aegisdb" },
+      "gridPos": { "h": 4, "w": 3, "x": 9, "y": 1 },
+      "targets": [
+        { "refId": "A", "format": "table", "rawQuery": true, "editorMode": "code", "rawSql": "SELECT count(*) AS \"active\" FROM users WHERE last_seen_at > now() - interval '30 days'" }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "New signups (7d)",
+      "type": "stat",
+      "datasource": { "type": "postgres", "uid": "aegisdb" },
+      "gridPos": { "h": 4, "w": 3, "x": 12, "y": 1 },
+      "targets": [
+        { "refId": "A", "format": "table", "rawQuery": true, "editorMode": "code", "rawSql": "SELECT count(*) AS \"signups\" FROM users WHERE created_at > now() - interval '7 days'" }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Email verified",
+      "type": "stat",
+      "datasource": { "type": "postgres", "uid": "aegisdb" },
+      "gridPos": { "h": 4, "w": 3, "x": 15, "y": 1 },
+      "description": "Unverified accounts that never convert are the usual sign of a broken or spam-filtered verification mail.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "decimals": 1,
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "orange", "value": 0.6 }, { "color": "green", "value": 0.85 }] }
+        },
+        "overrides": []
+      },
+      "targets": [
+        { "refId": "A", "format": "table", "rawQuery": true, "editorMode": "code", "rawSql": "SELECT count(*) FILTER (WHERE email_verified)::float / greatest(count(*), 1) AS \"verified\" FROM users" }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Paying accounts",
+      "type": "stat",
+      "datasource": { "type": "postgres", "uid": "aegisdb" },
+      "gridPos": { "h": 4, "w": 3, "x": 18, "y": 1 },
+      "targets": [
+        { "refId": "A", "format": "table", "rawQuery": true, "editorMode": "code", "rawSql": "SELECT count(*) AS \"paying\" FROM users WHERE subscription_tier <> 'free' AND subscription_status IN ('active', 'trialing')" }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "Deactivated",
+      "type": "stat",
+      "datasource": { "type": "postgres", "uid": "aegisdb" },
+      "gridPos": { "h": 4, "w": 3, "x": 21, "y": 1 },
+      "fieldConfig": {
+        "defaults": { "thresholds": { "mode": "absolute", "steps": [{ "color": "text", "value": null }, { "color": "orange", "value": 1 }] } },
+        "overrides": []
+      },
+      "targets": [
+        { "refId": "A", "format": "table", "rawQuery": true, "editorMode": "code", "rawSql": "SELECT count(*) AS \"deactivated\" FROM users WHERE is_active = false" }
+      ]
+    },
+
+    { "id": 101, "type": "row", "title": "Growth & engagement", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 5 }, "collapsed": false, "panels": [] },
+    {
+      "id": 10,
+      "title": "Signups per day",
+      "type": "timeseries",
+      "datasource": { "type": "postgres", "uid": "aegisdb" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 6 },
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "bars", "fillOpacity": 60 } }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "format": "time_series", "rawQuery": true, "editorMode": "code", "rawSql": "SELECT date_trunc('day', created_at) AS time, count(*) AS \"signups\"\nFROM users\nWHERE $__timeFilter(created_at)\nGROUP BY 1\nORDER BY 1" }
+      ]
+    },
+    {
+      "id": 11,
+      "title": "Daily active users",
+      "type": "timeseries",
+      "datasource": { "type": "postgres", "uid": "aegisdb" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 6 },
+      "description": "Distinct people who did something auditable that day (created a scan, changed a member, issued a token). last_seen_at only holds the latest visit, so history comes from the audit log — this counts doers, not browsers.",
+      "fieldConfig": { "defaults": { "custom": { "fillOpacity": 15 } }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "format": "time_series", "rawQuery": true, "editorMode": "code", "rawSql": "SELECT date_trunc('day', created_at) AS time, count(DISTINCT actor_user_id) AS \"active users\"\nFROM audit_events\nWHERE $__timeFilter(created_at) AND actor_user_id IS NOT NULL\nGROUP BY 1\nORDER BY 1" }
+      ]
+    },
+    {
+      "id": 12,
+      "title": "Users by tier",
+      "type": "piechart",
+      "datasource": { "type": "postgres", "uid": "aegisdb" },
+      "gridPos": { "h": 8, "w": 6, "x": 0, "y": 14 },
+      "options": { "legend": { "displayMode": "list", "placement": "right", "showLegend": true }, "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } },
+      "targets": [
+        { "refId": "A", "format": "time_series", "rawQuery": true, "editorMode": "code", "rawSql": "SELECT now() AS time, count(*) AS value, subscription_tier AS metric\nFROM users\nGROUP BY subscription_tier" }
+      ]
+    },
+    {
+      "id": 13,
+      "title": "Users by subscription status",
+      "type": "piechart",
+      "datasource": { "type": "postgres", "uid": "aegisdb" },
+      "gridPos": { "h": 8, "w": 6, "x": 6, "y": 14 },
+      "options": { "legend": { "displayMode": "list", "placement": "right", "showLegend": true }, "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } },
+      "targets": [
+        { "refId": "A", "format": "time_series", "rawQuery": true, "editorMode": "code", "rawSql": "SELECT now() AS time, count(*) AS value, subscription_status AS metric\nFROM users\nGROUP BY subscription_status" }
+      ]
+    },
+    {
+      "id": 14,
+      "title": "Newest accounts",
+      "type": "table",
+      "datasource": { "type": "postgres", "uid": "aegisdb" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 14 },
+      "targets": [
+        { "refId": "A", "format": "table", "rawQuery": true, "editorMode": "code", "rawSql": "SELECT created_at AS \"signed up\", email, coalesce(display_name, '—') AS name,\n       subscription_tier AS tier, email_verified AS verified, last_seen_at AS \"last seen\"\nFROM users\nORDER BY created_at DESC\nLIMIT 20" }
+      ]
+    },
+    {
+      "id": 15,
+      "title": "Most recently active",
+      "type": "table",
+      "datasource": { "type": "postgres", "uid": "aegisdb" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 22 },
+      "targets": [
+        { "refId": "A", "format": "table", "rawQuery": true, "editorMode": "code", "rawSql": "SELECT last_seen_at AS \"last seen\", email, subscription_tier AS tier,\n       (SELECT count(*) FROM scans s WHERE s.created_by_user_id = u.id) AS scans\nFROM users u\nWHERE last_seen_at IS NOT NULL\nORDER BY last_seen_at DESC\nLIMIT 20" }
+      ]
+    },
+    {
+      "id": 16,
+      "title": "Activation rate",
+      "type": "stat",
+      "datasource": { "type": "postgres", "uid": "aegisdb" },
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 22 },
+      "description": "Share of accounts that have ever started a scan. The single number that says whether signups turn into users.",
+      "fieldConfig": { "defaults": { "unit": "percentunit", "decimals": 1 }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "format": "table", "rawQuery": true, "editorMode": "code", "rawSql": "SELECT (SELECT count(DISTINCT created_by_user_id) FROM scans)::float\n       / greatest((SELECT count(*) FROM users), 1) AS \"activated\"" }
+      ]
+    },
+    {
+      "id": 17,
+      "title": "Accepted scan terms",
+      "type": "stat",
+      "datasource": { "type": "postgres", "uid": "aegisdb" },
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 22 },
+      "description": "Scanning is gated on this attestation (see SECURITY.md), so it is also the last step before a user can do anything useful.",
+      "fieldConfig": { "defaults": { "unit": "percentunit", "decimals": 1 }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "format": "table", "rawQuery": true, "editorMode": "code", "rawSql": "SELECT count(*) FILTER (WHERE scan_terms_accepted_at IS NOT NULL)::float / greatest(count(*), 1) AS \"accepted\" FROM users" }
+      ]
+    },
+    {
+      "id": 18,
+      "title": "Signed up but never seen since",
+      "type": "stat",
+      "datasource": { "type": "postgres", "uid": "aegisdb" },
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 26 },
+      "description": "Accounts older than a day with no authenticated request recorded. Dead signups.",
+      "fieldConfig": {
+        "defaults": { "thresholds": { "mode": "absolute", "steps": [{ "color": "text", "value": null }, { "color": "orange", "value": 1 }] } },
+        "overrides": []
+      },
+      "targets": [
+        { "refId": "A", "format": "table", "rawQuery": true, "editorMode": "code", "rawSql": "SELECT count(*) AS \"dormant\" FROM users WHERE last_seen_at IS NULL AND created_at < now() - interval '1 day'" }
+      ]
+    },
+    {
+      "id": 19,
+      "title": "Connected a git provider",
+      "type": "stat",
+      "datasource": { "type": "postgres", "uid": "aegisdb" },
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 26 },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "decimals": 1 }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "format": "table", "rawQuery": true, "editorMode": "code", "rawSql": "SELECT count(*) FILTER (WHERE github_token IS NOT NULL OR gitlab_token IS NOT NULL OR bitbucket_token IS NOT NULL)::float\n       / greatest(count(*), 1) AS \"connected\"\nFROM users" }
+      ]
+    },
+
+    { "id": 102, "type": "row", "title": "Platform", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 30 }, "collapsed": false, "panels": [] },
+    {
+      "id": 20,
+      "title": "Organizations",
+      "type": "stat",
+      "datasource": { "type": "postgres", "uid": "aegisdb" },
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 31 },
+      "targets": [
+        { "refId": "A", "format": "table", "rawQuery": true, "editorMode": "code", "rawSql": "SELECT count(*) AS \"orgs\" FROM organizations" }
+      ]
+    },
+    {
+      "id": 21,
+      "title": "Members per org (avg)",
+      "type": "stat",
+      "datasource": { "type": "postgres", "uid": "aegisdb" },
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 31 },
+      "description": "Above 1 means the product is spreading inside a company rather than sitting with one person.",
+      "fieldConfig": { "defaults": { "decimals": 2 }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "format": "table", "rawQuery": true, "editorMode": "code", "rawSql": "SELECT count(*)::float / greatest((SELECT count(*) FROM organizations), 1) AS \"members\" FROM org_memberships" }
+      ]
+    },
+    {
+      "id": 22,
+      "title": "Targets",
+      "type": "stat",
+      "datasource": { "type": "postgres", "uid": "aegisdb" },
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 31 },
+      "targets": [
+        { "refId": "A", "format": "table", "rawQuery": true, "editorMode": "code", "rawSql": "SELECT count(*) AS \"targets\" FROM targets" }
+      ]
+    },
+    {
+      "id": 23,
+      "title": "Scans (30d)",
+      "type": "stat",
+      "datasource": { "type": "postgres", "uid": "aegisdb" },
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 31 },
+      "targets": [
+        { "refId": "A", "format": "table", "rawQuery": true, "editorMode": "code", "rawSql": "SELECT count(*) AS \"scans\" FROM scans WHERE created_at > now() - interval '30 days'" }
+      ]
+    },
+    {
+      "id": 24,
+      "title": "Findings (30d)",
+      "type": "stat",
+      "datasource": { "type": "postgres", "uid": "aegisdb" },
+      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 31 },
+      "targets": [
+        { "refId": "A", "format": "table", "rawQuery": true, "editorMode": "code", "rawSql": "SELECT count(*) AS \"findings\" FROM vulnerabilities WHERE created_at > now() - interval '30 days'" }
+      ]
+    },
+    {
+      "id": 25,
+      "title": "LLM spend (30d)",
+      "type": "stat",
+      "datasource": { "type": "postgres", "uid": "aegisdb" },
+      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 31 },
+      "description": "Cost of goods sold. Compare against what those users pay.",
+      "fieldConfig": { "defaults": { "unit": "currencyUSD", "decimals": 2 }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "format": "table", "rawQuery": true, "editorMode": "code", "rawSql": "SELECT coalesce(sum(cost_usd), 0) AS \"spend\" FROM scans WHERE created_at > now() - interval '30 days'" }
+      ]
+    },
+    {
+      "id": 26,
+      "title": "Scans per day by status",
+      "type": "timeseries",
+      "datasource": { "type": "postgres", "uid": "aegisdb" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 35 },
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "bars", "fillOpacity": 70, "stacking": { "mode": "normal" } } }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "format": "time_series", "rawQuery": true, "editorMode": "code", "rawSql": "SELECT date_trunc('day', created_at) AS time, count(*) AS value, status AS metric\nFROM scans\nWHERE $__timeFilter(created_at)\nGROUP BY 1, 3\nORDER BY 1" }
+      ]
+    },
+    {
+      "id": 27,
+      "title": "Findings per day by severity",
+      "type": "timeseries",
+      "datasource": { "type": "postgres", "uid": "aegisdb" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 35 },
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "bars", "fillOpacity": 70, "stacking": { "mode": "normal" } } }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "format": "time_series", "rawQuery": true, "editorMode": "code", "rawSql": "SELECT date_trunc('day', created_at) AS time, count(*) AS value, severity AS metric\nFROM vulnerabilities\nWHERE $__timeFilter(created_at)\nGROUP BY 1, 3\nORDER BY 1" }
+      ]
+    },
+    {
+      "id": 28,
+      "title": "LLM cost per day",
+      "type": "timeseries",
+      "datasource": { "type": "postgres", "uid": "aegisdb" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 43 },
+      "fieldConfig": { "defaults": { "unit": "currencyUSD", "custom": { "fillOpacity": 15 } }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "format": "time_series", "rawQuery": true, "editorMode": "code", "rawSql": "SELECT date_trunc('day', created_at) AS time, coalesce(sum(cost_usd), 0) AS \"cost\"\nFROM scans\nWHERE $__timeFilter(created_at)\nGROUP BY 1\nORDER BY 1" }
+      ]
+    },
+    {
+      "id": 29,
+      "title": "Top organizations (30d)",
+      "type": "table",
+      "datasource": { "type": "postgres", "uid": "aegisdb" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 43 },
+      "description": "Who actually uses the platform, and what they cost to serve.",
+      "fieldConfig": { "defaults": {}, "overrides": [{ "matcher": { "id": "byName", "options": "spend" }, "properties": [{ "id": "unit", "value": "currencyUSD" }] }] },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code",
+          "rawSql": "SELECT o.name AS org,\n       (SELECT count(*) FROM org_memberships m WHERE m.organization_id = o.id) AS members,\n       (SELECT count(*) FROM targets t WHERE t.organization_id = o.id) AS targets,\n       count(s.id) AS scans,\n       coalesce(sum(s.cost_usd), 0) AS spend\nFROM organizations o\nLEFT JOIN targets t ON t.organization_id = o.id\nLEFT JOIN scans s ON s.target_id = t.id AND s.created_at > now() - interval '30 days'\nGROUP BY o.id, o.name\nORDER BY scans DESC, spend DESC\nLIMIT 20"
+        }
+      ]
+    }
+  ]
+}
