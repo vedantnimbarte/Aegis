@@ -4,6 +4,11 @@ subscription/quota gate that guards scanning.
 Stripe is imported lazily-configured: the secret key is applied per call so a
 missing key surfaces as a clean ``BillingError`` (HTTP 400/503) rather than an
 import-time crash. All monetary/plan entitlements come from ``billing_plans``.
+
+Entitlement is read from an organization's **billing user** (its owner, or its
+agency's owner for a client workspace) while usage is counted across the
+*organization*, so a team shares one allowance instead of each member getting
+their own.
 """
 from __future__ import annotations
 
@@ -15,11 +20,12 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.models.enums import SubscriptionStatus, SubscriptionTier
-from app.models.repository import Repository
+from app.models.enums import ScanMode, ScanStatus, SubscriptionStatus, SubscriptionTier
+from app.models.organization import Organization, OrgMembership
 from app.models.scan import Scan
+from app.models.target import Target
 from app.models.user import User
-from app.services import billing_plans
+from app.services import billing_plans, org_service
 
 
 class BillingError(Exception):
@@ -30,7 +36,7 @@ class PaymentRequiredError(Exception):
     """The user is not entitled to the requested action (gate/quota).
 
     ``reason`` is a stable machine code the frontend can branch on
-    (``no_subscription`` | ``scan_quota`` | ``repo_quota``).
+    (``no_subscription`` | ``scan_quota`` | ``target_quota`` | ``seat_quota``).
     """
 
     def __init__(self, detail: str, reason: str) -> None:
@@ -108,6 +114,30 @@ def create_checkout_session(db: Session, user: User, tier: SubscriptionTier) -> 
     return session["url"]
 
 
+def create_compliance_checkout(db: Session, user: User, scan_id: str) -> str:
+    """One-time purchase of an audit-ready compliance pentest report.
+
+    Sold separately from the subscription because it answers a different
+    question: not "watch my code" but "give me the document my auditor and my
+    prospect's security reviewer will accept", usually against a deadline.
+    """
+    if not settings.STRIPE_PRICE_COMPLIANCE_REPORT:
+        raise BillingError("No Stripe price configured for the compliance report")
+    customer_id = get_or_create_customer(db, user)
+    session = _stripe().checkout.Session.create(
+        mode="payment",
+        customer=customer_id,
+        line_items=[{"price": settings.STRIPE_PRICE_COMPLIANCE_REPORT, "quantity": 1}],
+        success_url=f"{settings.DASHBOARD_URL}/scans/{scan_id}?compliance=purchased",
+        cancel_url=f"{settings.DASHBOARD_URL}/scans/{scan_id}",
+        client_reference_id=str(user.id),
+        metadata={"scan_id": scan_id, "kind": "compliance_report"},
+    )
+    if not session.get("url"):
+        raise BillingError("Stripe did not return a checkout URL")
+    return session["url"]
+
+
 def create_portal_session(db: Session, user: User) -> str:
     """Create a billing-portal session so the user can manage their plan."""
     if not user.stripe_customer_id:
@@ -179,6 +209,9 @@ def _apply_subscription(db: Session, subscription: Any) -> None:
     tier = tier_for_price(price_id)
     if tier is not None:
         user.subscription_tier = tier
+    # Seats are the subscription quantity: buying five seats bills five and
+    # entitles five, without a second source of truth to drift from Stripe.
+    user.purchased_seats = _quantity_from_subscription(subscription)
     user.stripe_subscription_id = subscription.get("id")
     user.subscription_current_period_end = _ts(subscription.get("current_period_end"))
     db.commit()
@@ -189,6 +222,14 @@ def _price_from_subscription(subscription: Any) -> Optional[str]:
     if not items:
         return None
     return (items[0].get("price") or {}).get("id")
+
+
+def _quantity_from_subscription(subscription: Any) -> Optional[int]:
+    items = (subscription.get("items") or {}).get("data") or []
+    if not items:
+        return None
+    quantity = items[0].get("quantity")
+    return quantity if isinstance(quantity, int) and quantity > 0 else None
 
 
 def _coerce_status(raw: str) -> SubscriptionStatus:
@@ -204,56 +245,126 @@ def _ts(epoch: Any) -> Optional[datetime]:
     return datetime.fromtimestamp(epoch, tz=timezone.utc)
 
 
-# --- The gate -------------------------------------------------------------
+# --- Usage counting -------------------------------------------------------
 def _first_of_month_utc() -> datetime:
     now = datetime.now(timezone.utc)
     return now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
 
-def monthly_scan_count(db: Session, user: User) -> int:
-    """Scans the user has created since the start of the current UTC month."""
+def monthly_credits_used(db: Session, org: Organization) -> int:
+    """Scan credits the organization has consumed this UTC month.
+
+    Canceled and failed scans are excluded: charging for a run that produced
+    no report is the kind of billing a customer only notices once.
+    """
+    rows = db.execute(
+        select(Scan.scan_mode, Scan.trigger, Scan.status)
+        .join(Target, Scan.target_id == Target.id)
+        .where(
+            Target.organization_id == org.id,
+            Scan.created_at >= _first_of_month_utc(),
+            Scan.status.notin_((ScanStatus.FAILED, ScanStatus.CANCELED)),
+        )
+    ).all()
+    from app.models.enums import ScanTrigger  # local: avoids a wider import
+
+    return sum(
+        billing_plans.credits_for_mode(mode, is_retest=trigger is ScanTrigger.RETEST)
+        for mode, trigger, _ in rows
+    )
+
+
+def connected_target_count(db: Session, org: Organization) -> int:
     return db.execute(
-        select(func.count(Scan.id))
-        .select_from(Scan)
-        .join(Repository, Scan.repository_id == Repository.id)
-        .where(Repository.user_id == user.id, Scan.created_at >= _first_of_month_utc())
+        select(func.count(Target.id)).where(Target.organization_id == org.id)
     ).scalar_one()
 
 
-def connected_repo_count(db: Session, user: User) -> int:
+def seat_count(db: Session, org: Organization) -> int:
     return db.execute(
-        select(func.count(Repository.id)).where(Repository.user_id == user.id)
+        select(func.count(OrgMembership.id)).where(
+            OrgMembership.organization_id == org.id
+        )
     ).scalar_one()
 
 
-def assert_can_create_scan(db: Session, user: User) -> None:
-    """Raise ``PaymentRequiredError`` unless the user may launch another scan."""
-    if not user.has_active_subscription:
+def included_credits(user: User) -> Optional[int]:
+    """The organization's credit allowance for the period.
+
+    A purchased override beats the tier default, so a negotiated deal does not
+    need a new tier in the code.
+    """
+    limits = billing_plans.limits_for(user.subscription_tier)
+    if user.purchased_scan_credits is not None:
+        return user.purchased_scan_credits
+    return limits.included_credits
+
+
+def included_seats(user: User) -> Optional[int]:
+    limits = billing_plans.limits_for(user.subscription_tier)
+    if user.purchased_seats is not None:
+        return user.purchased_seats
+    return limits.included_seats
+
+
+# --- The gate -------------------------------------------------------------
+def assert_can_create_scan(
+    db: Session,
+    org: Organization,
+    *,
+    scan_mode: ScanMode = ScanMode.QUICK,
+    is_retest: bool = False,
+) -> None:
+    """Raise ``PaymentRequiredError`` unless this organization may scan."""
+    payer = org_service.billing_user(db, org)
+    if not payer.has_active_subscription:
         raise PaymentRequiredError(
             "An active subscription is required to run scans.", "no_subscription"
         )
-    limits = billing_plans.limits_for(user.subscription_tier)
-    used = monthly_scan_count(db, user)
-    if not billing_plans.within_limit(used, limits.monthly_scans):
-        raise PaymentRequiredError(
-            f"You've used all {limits.monthly_scans} scans on the {limits.name} plan "
-            "this month. Upgrade for more.",
-            "scan_quota",
-        )
+
+    limits = billing_plans.limits_for(payer.subscription_tier)
+    cost = billing_plans.credits_for_mode(scan_mode, is_retest=is_retest)
+    allowance = included_credits(payer)
+    used = monthly_credits_used(db, org)
+
+    if billing_plans.has_credit_for(used, cost, allowance):
+        return
+    if limits.allow_overage:
+        # Past the allowance the plan keeps working and the overage is billed.
+        # Failing a customer's pipeline at month-end is worse than an invoice.
+        return
+    raise PaymentRequiredError(
+        f"This scan needs {cost} credit(s) and the {limits.name} plan's "
+        f"{allowance} monthly credits are used up. Upgrade for more.",
+        "scan_quota",
+    )
 
 
-def assert_can_connect_repo(db: Session, user: User) -> None:
-    """Raise ``PaymentRequiredError`` unless the user may connect another repo."""
-    if not user.has_active_subscription:
+def assert_can_connect_target(db: Session, org: Organization) -> None:
+    """Raise ``PaymentRequiredError`` unless another target may be connected."""
+    payer = org_service.billing_user(db, org)
+    if not payer.has_active_subscription:
         raise PaymentRequiredError(
-            "An active subscription is required to connect repositories.",
+            "An active subscription is required to connect targets.",
             "no_subscription",
         )
-    limits = billing_plans.limits_for(user.subscription_tier)
-    used = connected_repo_count(db, user)
-    if not billing_plans.within_limit(used, limits.max_repos):
+    limits = billing_plans.limits_for(payer.subscription_tier)
+    used = connected_target_count(db, org)
+    if not billing_plans.within_limit(used, limits.max_targets):
         raise PaymentRequiredError(
-            f"The {limits.name} plan allows {limits.max_repos} repositories. "
+            f"The {limits.name} plan allows {limits.max_targets} targets. "
             "Upgrade to connect more.",
-            "repo_quota",
+            "target_quota",
         )
+
+
+def assert_seat_available(db: Session, org: Organization) -> None:
+    """Raise ``PaymentRequiredError`` unless another member fits on the plan."""
+    payer = org_service.billing_user(db, org)
+    allowance = included_seats(payer)
+    if billing_plans.within_limit(seat_count(db, org), allowance):
+        return
+    raise PaymentRequiredError(
+        f"Your plan includes {allowance} seats. Add seats to invite more people.",
+        "seat_quota",
+    )

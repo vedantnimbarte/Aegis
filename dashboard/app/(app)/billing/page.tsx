@@ -102,19 +102,40 @@ function BillingInner() {
           ) : null}
         </div>
 
-        {/* Usage */}
-        <div className="mt-5 grid gap-4 border-t border-line pt-5 sm:grid-cols-2">
+        {/* Usage. Scans are priced in credits by depth, because a deep scan
+            spends several times the tokens of a quick one. */}
+        <div className="mt-5 grid gap-4 border-t border-line pt-5 sm:grid-cols-3">
           <UsageBar
-            label="Scans this month"
-            used={s.usage.scans_this_month}
-            limit={s.limits.monthly_scans}
+            label="Scan credits"
+            used={s.usage.credits_used}
+            limit={s.usage.credits_included}
+            overage={s.limits.allow_overage}
           />
           <UsageBar
-            label="Connected repositories"
-            used={s.usage.connected_repos}
-            limit={s.limits.max_repos}
+            label="Targets"
+            used={s.usage.connected_targets}
+            limit={s.limits.max_targets}
+          />
+          <UsageBar
+            label="Seats"
+            used={s.usage.seats_used}
+            limit={s.usage.seats_included}
           />
         </div>
+
+        <p className="mt-3 font-mono text-[11px] text-faint">
+          {Object.entries(s.usage.credit_cost_by_mode)
+            .map(([mode, cost]) => `${mode} ${cost}`)
+            .join(" · ")}{" "}
+          credits per scan · retests are free
+        </p>
+
+        {s.billed_to_parent ? (
+          <p className="mt-3 rounded-lg border border-line bg-ink px-3 py-2 text-[12px] text-muted">
+            This is a client workspace. Its usage is billed to the parent
+            organization's plan.
+          </p>
+        ) : null}
       </Card>
 
       {actionError ? (
@@ -140,9 +161,22 @@ function BillingInner() {
   );
 }
 
-function UsageBar({ label, used, limit }: { label: string; used: number; limit: number | null }) {
+function UsageBar({
+  label,
+  used,
+  limit,
+  overage,
+}: {
+  label: string;
+  used: number;
+  limit: number | null;
+  overage?: boolean;
+}) {
   const pct = limit && limit > 0 ? Math.min(100, Math.round((used / limit) * 100)) : 0;
   const atLimit = limit != null && used >= limit;
+  // Past the included allowance a plan with overage keeps working and bills
+  // the difference, so it reads as a warning rather than a hard stop.
+  const tone = atLimit ? (overage ? "#F5B544" : "#FB5C6B") : "#22D3EE";
   return (
     <div>
       <div className="mb-1.5 flex items-center justify-between text-[12px]">
@@ -156,10 +190,15 @@ function UsageBar({ label, used, limit }: { label: string; used: number; limit: 
           className="h-full rounded-full transition-all"
           style={{
             width: limit == null ? "8%" : `${pct}%`,
-            backgroundColor: atLimit ? "#FB5C6B" : "#22D3EE",
+            backgroundColor: tone,
           }}
         />
       </div>
+      {atLimit && overage ? (
+        <p className="mt-1.5 text-[11px] text-amber">
+          Included credits used — further scans are billed as overage.
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -176,8 +215,15 @@ function PlanCard({
   onSubscribe: () => void;
 }) {
   const features = [
-    plan.max_repos == null ? "Unlimited repositories" : `${plan.max_repos} repositories`,
-    plan.monthly_scans == null ? "Unlimited scans" : `${plan.monthly_scans} scans / month`,
+    plan.max_targets == null ? "Unlimited targets" : `${plan.max_targets} targets`,
+    plan.included_credits == null
+      ? "Unlimited scan credits"
+      : `${plan.included_credits} scan credits / month`,
+    plan.included_seats == null ? "Unlimited seats" : `${plan.included_seats} seats`,
+    ...(plan.byok ? ["Bring your own LLM key"] : []),
+    ...(plan.compliance_reports ? ["Audit-ready compliance reports"] : []),
+    ...(plan.white_label ? ["White-label report branding"] : []),
+    ...(plan.mssp ? ["Client workspaces"] : []),
   ];
 
   return (

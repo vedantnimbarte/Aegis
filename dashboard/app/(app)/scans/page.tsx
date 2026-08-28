@@ -19,7 +19,7 @@ import { api } from "@/lib/api";
 import { formatDuration, relativeTime } from "@/lib/format";
 import type { Scan } from "@/lib/types";
 
-/** Repository · findings · mode · duration · status · chevron. */
+/** Target · findings · mode · duration · status · chevron. */
 const COLUMNS = "sm:grid-cols-[1fr_8rem_5rem_6rem_7rem_1.5rem]";
 
 export default function ScansPage() {
@@ -32,18 +32,24 @@ export default function ScansPage() {
       return data.some((s) => s.status === "running" || s.status === "pending") ? 5000 : false;
     },
   });
-  const reposQuery = useQuery({ queryKey: ["repos"], queryFn: api.listRepos });
+  const targetsQuery = useQuery({
+    queryKey: ["targets"],
+    queryFn: () => api.listTargets(),
+  });
 
   const scans = scansQuery.data ?? [];
-  const repos = reposQuery.data ?? [];
-  const repoName = useMemo(() => new Map(repos.map((r) => [r.id, r.name])), [repos]);
+  const targets = targetsQuery.data ?? [];
+  const targetName = useMemo(
+    () => new Map(targets.map((t) => [t.id, t.name])),
+    [targets]
+  );
 
   return (
     <>
       <PageHeader
         title="Scans"
         subtitle="Every pentest run, newest first."
-        action={<NewScanAction repositories={repos} />}
+        action={<NewScanAction targets={targets} />}
       />
 
       {scansQuery.isLoading ? (
@@ -54,7 +60,7 @@ export default function ScansPage() {
         <EmptyState
           icon={Radar}
           title="No scans yet"
-          action={<NewScanAction repositories={repos} label="Launch a scan" />}
+          action={<NewScanAction targets={targets} label="Launch a scan" />}
         >
           Once you launch a pentest it will appear here with its live status and results.
         </EmptyState>
@@ -64,7 +70,7 @@ export default function ScansPage() {
           <div
             className={`hidden gap-4 border-b border-line px-4 py-3 font-mono text-[10px] uppercase tracking-wide text-faint sm:grid ${COLUMNS}`}
           >
-            <span>Repository</span>
+            <span>Target</span>
             <span>Findings</span>
             <span>Mode</span>
             <span>Duration</span>
@@ -74,7 +80,10 @@ export default function ScansPage() {
           <ul className="divide-y divide-line">
             {scans.map((scan) => (
               <li key={scan.id}>
-                <ScanRow scan={scan} repoName={repoName.get(scan.repository_id)} />
+                <ScanRow
+                  scan={scan}
+                  targetName={scan.target_name ?? targetName.get(scan.target_id)}
+                />
               </li>
             ))}
           </ul>
@@ -84,7 +93,7 @@ export default function ScansPage() {
   );
 }
 
-function ScanRow({ scan, repoName }: { scan: Scan; repoName?: string }) {
+function ScanRow({ scan, targetName }: { scan: Scan; targetName?: string }) {
   const running = scan.status === "running" || scan.status === "pending";
 
   return (
@@ -93,7 +102,7 @@ function ScanRow({ scan, repoName }: { scan: Scan; repoName?: string }) {
       className={`grid grid-cols-[1fr_auto] items-center gap-4 px-4 py-3.5 transition-colors hover:bg-surface/60 ${COLUMNS}`}
     >
       <div className="min-w-0">
-        <p className="truncate font-mono text-[13px] text-fg">{repoName ?? "Unknown repo"}</p>
+        <p className="truncate font-mono text-[13px] text-fg">{targetName ?? "Unknown repo"}</p>
         <p className="text-[11px] text-faint">
           {scan.trigger === "pull_request" && scan.github_pr_number
             ? `PR #${scan.github_pr_number} · `

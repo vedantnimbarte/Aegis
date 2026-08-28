@@ -1,4 +1,4 @@
-"""Scan model — one execution of the Strix engine against a repository."""
+"""Scan model — one execution of the Strix engine against a target."""
 from __future__ import annotations
 
 import uuid
@@ -6,25 +6,32 @@ from datetime import datetime
 from typing import TYPE_CHECKING, List, Optional
 
 from sqlalchemy import BigInteger, DateTime, Float, ForeignKey, Integer, String, Text
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base_class import Base, TimestampMixin, UUIDMixin, str_enum
-from app.models.enums import ScanMode, ScanStatus, ScanTrigger
+from app.models.enums import RetestOutcome, ScanMode, ScanStatus, ScanTrigger
 
 if TYPE_CHECKING:
-    from app.models.repository import Repository
+    from app.models.target import Target
+    from app.models.user import User
     from app.models.vulnerability import Vulnerability
 
 
 class Scan(UUIDMixin, TimestampMixin, Base):
     __tablename__ = "scans"
 
-    repository_id: Mapped[uuid.UUID] = mapped_column(
+    target_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("repositories.id", ondelete="CASCADE"),
+        ForeignKey("targets.id", ondelete="CASCADE"),
         index=True,
         nullable=False,
+    )
+    # Who launched it. NULL for scheduler- and webhook-initiated scans.
+    created_by_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
     )
 
     status: Mapped[ScanStatus] = mapped_column(
@@ -44,13 +51,24 @@ class Scan(UUIDMixin, TimestampMixin, Base):
     # Optional free-text instructions passed to Strix agents.
     custom_instructions: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
-    # What kicked off this scan (manual / scheduled / pull_request).
+    # What kicked off this scan (manual / scheduled / pull_request / retest).
     trigger: Mapped[ScanTrigger] = mapped_column(
         str_enum(ScanTrigger, "scan_trigger"),
         default=ScanTrigger.MANUAL,
         server_default=ScanTrigger.MANUAL.value,
         nullable=False,
     )
+
+    # --- Retest context (set only for trigger == retest) -----------------
+    # The single finding this run exists to re-check. A retest is a scan with
+    # a question rather than a survey: does this exploit still work?
+    retest_fingerprint: Mapped[Optional[str]] = mapped_column(
+        String(64), index=True, nullable=True
+    )
+    retest_outcome: Mapped[Optional[RetestOutcome]] = mapped_column(
+        str_enum(RetestOutcome, "retest_outcome"), nullable=True
+    )
+
     # Pull-request context (set only for GitHub App / pull_request scans).
     github_installation_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     github_pr_number: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
@@ -72,6 +90,15 @@ class Scan(UUIDMixin, TimestampMixin, Base):
     # URL of the auto-fix pull request, once generated.
     autofix_pr_url: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)
 
+    # The engine build that produced these findings, recorded so a report can
+    # answer "what tested this, and when" years later (see services/evidence).
+    engine_model: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+
+    # Attack chains computed at ingest: a JSON list of
+    # {"title", "severity", "narrative", "fingerprints": [...]}. Stored rather
+    # than recomputed so a report never changes shape after it was shared.
+    attack_chains: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True)
+
     started_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
@@ -80,11 +107,18 @@ class Scan(UUIDMixin, TimestampMixin, Base):
     )
 
     # Relationships -------------------------------------------------------
-    repository: Mapped["Repository"] = relationship(back_populates="scans")
+    target: Mapped["Target"] = relationship(back_populates="scans")
+    created_by: Mapped[Optional["User"]] = relationship(
+        foreign_keys=[created_by_user_id]
+    )
     vulnerabilities: Mapped[List["Vulnerability"]] = relationship(
         back_populates="scan",
         cascade="all, delete-orphan",
     )
+
+    @property
+    def is_retest(self) -> bool:
+        return self.trigger is ScanTrigger.RETEST
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"<Scan id={self.id} status={self.status.value}>"

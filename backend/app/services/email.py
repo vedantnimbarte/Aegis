@@ -136,3 +136,47 @@ def send_scan_complete_email(
         f"</div>"
     )
     send_email(to, subject, text, html)
+
+
+def send_discovery_email(
+    to: str,
+    *,
+    source_name: str,
+    hostnames: list[str],
+    dashboard_url: str,
+) -> None:
+    """Tell the owner that new assets appeared on their attack surface.
+
+    Deliberately worded as a prompt to confirm ownership rather than an
+    invitation to scan: discovery finds hosts that resolve under a domain, and
+    a shared platform or a partner's subdomain can resolve there too.
+    """
+    count = len(hostnames)
+    plural = "asset" if count == 1 else "assets"
+    subject = f"Aegis discovered {count} new {plural} under {source_name}"
+    listed = "\n".join(f"  - {name}" for name in hostnames[:25])
+    if count > 25:
+        listed += "\n  - ...and {} more".format(count - 25)
+
+    summary = (
+        "These hosts resolve under a domain you are monitoring and were not "
+        "already tracked. Confirm you are authorized to test them before "
+        "launching a scan."
+    )
+    text = "{}\n\n{}\n\nReview them:\n{}\n".format(subject, listed, dashboard_url)
+
+    items = "".join(
+        '<li style="font-family:ui-monospace,monospace">{}</li>'.format(name)
+        for name in hostnames[:25]
+    )
+    html = (
+        '<div style="font-family:system-ui,sans-serif;line-height:1.5;color:#111">'
+        '<h2 style="margin:0 0 12px">Attack surface changed</h2>'
+        "<p>{}</p>".format(summary)
+        + '<ul style="padding-left:20px">{}</ul>'.format(items)
+        + '<p><a href="{}" style="display:inline-block;background:#22D3EE;'
+        'color:#07090E;font-weight:600;text-decoration:none;padding:10px 18px;'
+        'border-radius:8px">Review targets</a></p>'.format(dashboard_url)
+        + "</div>"
+    )
+    send_email(to, subject, text, html)

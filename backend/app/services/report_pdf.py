@@ -88,7 +88,7 @@ class _ReportPDF(FPDF):
         content = self.w - self.l_margin - self.r_margin
         self.set_font("Helvetica", "B", 10)
         self.set_text_color(*_ACCENT)
-        self.cell(content / 2, 8, "AEGIS", align="L")
+        self.cell(content / 2, 8, self.brand, align="L")
         self.set_font("Helvetica", "", 8)
         self.set_text_color(*_MUTED)
         self.cell(0, 8, "Penetration Test Report", align="R", **_NL)
@@ -104,17 +104,39 @@ class _ReportPDF(FPDF):
         self.cell(0, 8, f"Page {self.page_no()}/{{nb}}", align="R")
 
 
-def build_report_pdf(report: "ScanReport", repo_name: str) -> bytes:
-    """Render ``report`` to PDF bytes. ``repo_name`` titles the document."""
+def build_report_pdf(
+    report: "ScanReport",
+    target_name: str,
+    *,
+    compliance: Any = None,
+    brand: str = "AEGIS",
+    include_poc: bool = True,
+) -> bytes:
+    """Render ``report`` to PDF bytes. ``target_name`` titles the document.
+
+    Passing a ``compliance`` context (see ``services/compliance.py``) turns the
+    findings list into the pack an auditor expects: an executive summary,
+    scope, methodology, control mappings, stated limitations, and a signed
+    attestation letter around the same findings.
+
+    ``include_poc=False`` strips working exploit code, which is what a shared
+    link hands to someone outside the company.
+    """
     pdf = _ReportPDF(orientation="P", unit="mm", format="A4")
+    pdf.brand = _s(brand)
     pdf.set_auto_page_break(auto=True, margin=16)
-    pdf.set_title(f"Aegis Report - {repo_name}")
+    pdf.set_title(f"{_s(brand)} Report - {_s(target_name)}")
     pdf.alias_nb_pages()
     pdf.add_page()
 
-    _title_block(pdf, report, repo_name)
+    _title_block(pdf, report, target_name, compliance is not None)
+    if compliance is not None:
+        _compliance_front_matter(pdf, compliance)
     _summary_block(pdf, report)
-    _findings(pdf, report)
+    _chains_block(pdf, report)
+    _findings(pdf, report, include_poc=include_poc)
+    if compliance is not None:
+        _compliance_back_matter(pdf, compliance)
 
     return bytes(pdf.output())
 
@@ -123,11 +145,20 @@ def _content_width(pdf: FPDF) -> float:
     return pdf.w - pdf.l_margin - pdf.r_margin
 
 
-def _title_block(pdf: _ReportPDF, report: "ScanReport", repo_name: str) -> None:
+def _title_block(
+    pdf: _ReportPDF,
+    report: "ScanReport",
+    target_name: str,
+    is_compliance: bool = False,
+) -> None:
     scan = report.scan
+    if is_compliance:
+        pdf.set_font("Helvetica", "B", 10)
+        pdf.set_text_color(*_ACCENT)
+        pdf.multi_cell(0, 6, "PENETRATION TEST REPORT", **_NL)
     pdf.set_font("Helvetica", "B", 20)
     pdf.set_text_color(*_INK)
-    pdf.multi_cell(0, 9, _s(repo_name), **_NL)
+    pdf.multi_cell(0, 9, _s(target_name), **_NL)
     pdf.ln(1)
 
     generated = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
@@ -139,6 +170,9 @@ def _title_block(pdf: _ReportPDF, report: "ScanReport", repo_name: str) -> None:
         ("Scan ID", _s(scan.id)),
         ("Generated", generated),
     ]
+    engine_model = getattr(scan, "engine_model", None)
+    if engine_model:
+        rows.insert(2, ("Engine", _s(engine_model)))
     pdf.set_font("Helvetica", "", 9)
     for label, value in rows:
         pdf.set_text_color(*_MUTED)
@@ -170,6 +204,20 @@ def _summary_block(pdf: _ReportPDF, report: "ScanReport") -> None:
         pdf.cell(2, 7, "")  # spacer between chips
     if any_shown:
         pdf.ln(11)
+        verified = getattr(report, "verified_fixed_count", 0) or 0
+        if verified:
+            pdf.set_font("Helvetica", "", 9)
+            pdf.set_text_color(*_MUTED)
+            pdf.multi_cell(
+                0,
+                5,
+                _s(
+                    f"{verified} finding(s) have been remediated and verified by "
+                    "re-running the original proof of concept."
+                ),
+                **_NL,
+            )
+            pdf.ln(1)
     else:
         pdf.set_text_color(*_MUTED)
         pdf.set_font("Helvetica", "I", 9)
@@ -177,7 +225,7 @@ def _summary_block(pdf: _ReportPDF, report: "ScanReport") -> None:
         pdf.ln(2)
 
 
-def _findings(pdf: _ReportPDF, report: "ScanReport") -> None:
+def _findings(pdf: _ReportPDF, report: "ScanReport", include_poc: bool = True) -> None:
     vulns = list(getattr(report, "vulnerabilities", []) or [])
     if not vulns:
         return
@@ -191,10 +239,10 @@ def _findings(pdf: _ReportPDF, report: "ScanReport") -> None:
     )
 
     for i, v in enumerate(vulns, start=1):
-        _finding(pdf, i, v)
+        _finding(pdf, i, v, include_poc=include_poc)
 
 
-def _finding(pdf: _ReportPDF, index: int, v: Any) -> None:
+def _finding(pdf: _ReportPDF, index: int, v: Any, include_poc: bool = True) -> None:
     sev = _val(v.severity)
     rgb = _SEVERITY_RGB.get(sev, _MUTED)
 
@@ -225,12 +273,186 @@ def _finding(pdf: _ReportPDF, index: int, v: Any) -> None:
         pdf.multi_cell(0, 5, _s("   ".join(meta_bits)), **_NL)
 
     _labeled_body(pdf, "Description", getattr(v, "description", ""))
-    _labeled_code(pdf, "Proof of concept", getattr(v, "poc_code", None))
+    if include_poc:
+        _labeled_code(pdf, "Proof of concept", getattr(v, "poc_code", None))
+    _evidence_block(pdf, getattr(v, "evidence", None), include_poc)
+    _retest_line(pdf, v)
     _labeled_body(pdf, "Remediation", getattr(v, "remediation", None))
 
     pdf.ln(1)
     pdf.set_draw_color(*_RULE)
     pdf.line(pdf.l_margin, pdf.get_y(), pdf.w - pdf.r_margin, pdf.get_y())
+
+
+def _evidence_block(pdf: _ReportPDF, evidence: Any, include_poc: bool) -> None:
+    """Print what was observed, so the reader can check the claim themselves.
+
+    On a shared report the transcript is withheld along with the PoC: a
+    request/response pair for a live exploit is a working recipe whatever the
+    surrounding document is called. Provenance still prints, because "tested
+    on this date against this commit" is the part an auditor needs.
+    """
+    if not evidence:
+        return
+    get = evidence.get if isinstance(evidence, dict) else lambda k: getattr(evidence, k, None)
+
+    if include_poc:
+        _labeled_code(pdf, "Evidence - request", get("request"))
+        _labeled_code(pdf, "Evidence - response", get("response"))
+        _labeled_code(pdf, "Evidence - proof-of-concept output", get("poc_output"))
+
+    provenance = []
+    if get("target_url"):
+        provenance.append(f"Target: {_s(get('target_url'))}")
+    if get("commit_sha"):
+        provenance.append(f"Commit: {_s(get('commit_sha'))[:12]}")
+    if get("model"):
+        provenance.append(f"Model: {_s(get('model'))}")
+    if get("observed_at"):
+        provenance.append(f"Observed: {_s(get('observed_at'))}")
+    if provenance:
+        _label(pdf, "Evidence - provenance")
+        pdf.set_font("Helvetica", "", 8.5)
+        pdf.set_text_color(*_MUTED)
+        pdf.multi_cell(0, 4.8, _s("   ".join(provenance)), **_NL)
+
+
+def _retest_line(pdf: _ReportPDF, v: Any) -> None:
+    """State the verification verdict, when this finding has been retested."""
+    outcome = _val(getattr(v, "retest_outcome", None) or "") or ""
+    if not outcome or outcome == "None":
+        return
+    when = getattr(v, "retested_at", None)
+    stamp = f" on {_fmt_dt(when)}" if when else ""
+    text = {
+        "fixed": f"Verified fixed{stamp} - the original exploit no longer succeeds.",
+        "still_vulnerable": f"Retested{stamp} - the exploit still succeeds.",
+        "inconclusive": f"Retested{stamp} - the retest did not complete; nothing was proven.",
+    }.get(outcome)
+    if not text:
+        return
+    _label(pdf, "Verification")
+    pdf.set_font("Helvetica", "", 9)
+    pdf.set_text_color(*_INK)
+    pdf.multi_cell(0, 5, _s(text), **_NL)
+
+
+def _chains_block(pdf: _ReportPDF, report: "ScanReport") -> None:
+    """Findings that compose into a worse outcome than any of them alone."""
+    chains = list(getattr(report, "attack_chains", []) or [])
+    if not chains:
+        return
+    _section_heading(pdf, "Attack chains")
+    pdf.set_font("Helvetica", "", 9.5)
+    pdf.set_text_color(*_MUTED)
+    pdf.multi_cell(
+        0,
+        5,
+        _s(
+            "Individually these findings are limited. Combined, each group below "
+            "reaches an outcome none of its parts reaches alone, and should be "
+            "prioritised accordingly."
+        ),
+        **_NL,
+    )
+    pdf.ln(2)
+
+    for chain in chains:
+        severity = _val(getattr(chain, "severity", None) or "info")
+        title = _s(getattr(chain, "title", "") or "Attack chain")
+        if pdf.get_y() > pdf.h - 45:
+            pdf.add_page()
+        y = pdf.get_y()
+        _chip(pdf, severity.capitalize(), _SEVERITY_RGB.get(severity, _MUTED))
+        pdf.set_xy(pdf.l_margin + 26, y)
+        pdf.set_font("Helvetica", "B", 11)
+        pdf.set_text_color(*_INK)
+        pdf.multi_cell(0, 6.5, title, **_NL)
+
+        pdf.set_font("Helvetica", "", 9.5)
+        pdf.set_text_color(*_INK)
+        pdf.multi_cell(0, 5, _s(getattr(chain, "narrative", "") or ""), **_NL)
+        for step in getattr(chain, "steps", []) or []:
+            _md_item(pdf, "-", _s(step))
+        pdf.ln(2)
+
+
+def _compliance_front_matter(pdf: _ReportPDF, context: Any) -> None:
+    """Executive summary, scope and methodology — the pages auditors read."""
+    from app.services import compliance as compliance_service
+
+    _section_heading(pdf, "Executive summary")
+    pdf.set_font("Helvetica", "", 10)
+    pdf.set_text_color(*_INK)
+    pdf.multi_cell(0, 5.5, _s(compliance_service.executive_summary(context)), **_NL)
+    pdf.ln(2)
+
+    _section_heading(pdf, "Scope")
+    pdf.set_font("Helvetica", "", 9.5)
+    pdf.multi_cell(0, 5, _s(context.scope_description), **_NL)
+    pdf.ln(1)
+    pdf.set_font("Helvetica", "", 9)
+    pdf.set_text_color(*_MUTED)
+    for label, value in (
+        ("Client", context.organization_name),
+        ("Tested by", context.vendor_name),
+        ("Engine", context.engine + (f" ({context.model})" if context.model else "")),
+    ):
+        pdf.multi_cell(0, 5, _s(f"{label}: {value}"), **_NL)
+    pdf.ln(2)
+
+    _section_heading(pdf, "Methodology")
+    for name, description in compliance_service.METHODOLOGY_STEPS:
+        pdf.set_font("Helvetica", "B", 9.5)
+        pdf.set_text_color(*_INK)
+        pdf.multi_cell(0, 5, _s(name), **_NL)
+        pdf.set_font("Helvetica", "", 9.5)
+        pdf.set_text_color(*_MUTED)
+        pdf.multi_cell(0, 5, _s(description), **_NL)
+        pdf.ln(1)
+
+    _section_heading(pdf, "Control mapping")
+    pdf.set_font("Helvetica", "", 9)
+    pdf.set_text_color(*_MUTED)
+    pdf.multi_cell(
+        0,
+        5,
+        _s(
+            "This assessment provides evidence toward the controls below. It is "
+            "not a certification of compliance with any framework."
+        ),
+        **_NL,
+    )
+    pdf.ln(1)
+    for mapping in compliance_service.CONTROL_MAPPINGS:
+        pdf.set_font("Helvetica", "B", 9)
+        pdf.set_text_color(*_INK)
+        pdf.multi_cell(0, 5, _s(f"{mapping.framework} - {mapping.control}"), **_NL)
+        pdf.set_font("Helvetica", "", 9)
+        pdf.set_text_color(*_MUTED)
+        pdf.multi_cell(0, 5, _s(mapping.description), **_NL)
+        pdf.ln(0.5)
+    pdf.ln(2)
+
+
+def _compliance_back_matter(pdf: _ReportPDF, context: Any) -> None:
+    """Limitations, then the attestation letter on its own page."""
+    from app.services import compliance as compliance_service
+
+    _section_heading(pdf, "Limitations")
+    for limitation in compliance_service.LIMITATIONS:
+        _md_item(pdf, "-", _s(limitation))
+    pdf.ln(2)
+
+    # The letter is what gets detached and handed to an auditor, so it starts
+    # on a clean page and carries the report reference on its face.
+    pdf.add_page()
+    _section_heading(pdf, "Letter of attestation")
+    pdf.set_font("Helvetica", "", 10)
+    pdf.set_text_color(*_INK)
+    for paragraph in compliance_service.attestation_letter(context).split("\n\n"):
+        pdf.multi_cell(0, 5.5, _s(paragraph), **_NL)
+        pdf.ln(2)
 
 
 def _labeled_body(pdf: _ReportPDF, label: str, text: Any) -> None:

@@ -231,3 +231,85 @@ def notify_webhook(
         resp.raise_for_status()
     except Exception:  # noqa: BLE001 - notifications must not break the scan
         logger.exception("Failed to deliver webhook for %s", repo_name)
+
+
+# --- Attack-surface discovery ---------------------------------------------
+def build_discovery_message(
+    source_name: str, hostnames: list[str], dashboard_url: str
+) -> dict:
+    """Slack payload announcing newly discovered assets."""
+    listed = "\n".join(f"- {name}" for name in hostnames[:15])
+    if len(hostnames) > 15:
+        listed += f"\n- ...and {len(hostnames) - 15} more"
+    count = len(hostnames)
+    plural = "asset" if count == 1 else "assets"
+    return {
+        "text": f"Aegis discovered {count} new {plural} under {source_name}",
+        "blocks": [
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": (
+                        f"*Attack surface changed* - {count} new {plural} "
+                        f"discovered under `{source_name}`.\n\n{listed}"
+                    ),
+                },
+            },
+            {
+                "type": "context",
+                "elements": [
+                    {
+                        "type": "mrkdwn",
+                        "text": (
+                            "These were found, not configured. Confirm you own "
+                            f"them before scanning: <{dashboard_url}|review targets>"
+                        ),
+                    }
+                ],
+            },
+        ],
+    }
+
+
+def notify_assets_discovered(
+    *,
+    email_to: Optional[str],
+    slack_webhook_url: Optional[str],
+    source_name: str,
+    hostnames: list[str],
+    summary: str,
+    dashboard_url: str,
+) -> None:
+    """Announce newly discovered assets on every channel the user has enabled.
+
+    Discovery is the one notification that is genuinely news: a host nobody
+    remembered deploying is exactly what gets breached. Delivery errors are
+    swallowed, like every other notification path.
+    """
+    if not hostnames:
+        return
+
+    from app.services import email as email_service
+
+    if email_to:
+        try:
+            email_service.send_discovery_email(
+                email_to,
+                source_name=source_name,
+                hostnames=hostnames,
+                dashboard_url=dashboard_url,
+            )
+        except Exception:  # noqa: BLE001 - delivery must not break the caller
+            logger.exception("Failed to send discovery email for %s", source_name)
+
+    if slack_webhook_url:
+        payload = build_discovery_message(source_name, hostnames, dashboard_url)
+        try:
+            resp = httpx.post(slack_webhook_url, json=payload, timeout=_TIMEOUT_SECONDS)
+            if resp.status_code >= 300:
+                logger.warning(
+                    "Slack discovery notification failed (HTTP %s)", resp.status_code
+                )
+        except Exception:  # noqa: BLE001
+            logger.exception("Failed to post discovery notification to Slack")

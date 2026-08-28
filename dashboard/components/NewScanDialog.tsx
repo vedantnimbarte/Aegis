@@ -1,9 +1,13 @@
 "use client";
 
-// Modal for launching a Strix scan: pick a connected repo, a scan depth, and
+// Modal for launching a Strix scan: pick a connected target, a scan depth, and
 // optional custom instructions. On success it routes to the new scan's report.
+//
+// Depth is priced in scan credits and the cost is shown up front, because a
+// deep scan costs real tokens and finding that out on the invoice is how a
+// metered product loses trust.
 
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Radar, X } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -11,7 +15,7 @@ import { useEffect, useState } from "react";
 
 import { api, ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import type { Repository, ScanMode } from "@/lib/types";
+import type { Target, ScanMode } from "@/lib/types";
 import { Button, ErrorState } from "./ui";
 
 const MODES: { value: ScanMode; title: string; blurb: string }[] = [
@@ -21,22 +25,34 @@ const MODES: { value: ScanMode; title: string; blurb: string }[] = [
 ];
 
 export function NewScanDialog({
-  repositories,
-  defaultRepoId,
+  targets,
+  defaultTargetId,
   onClose,
 }: {
-  repositories: Repository[];
-  defaultRepoId?: string;
+  targets: Target[];
+  defaultTargetId?: string;
   onClose: () => void;
 }) {
   const router = useRouter();
   const queryClient = useQueryClient();
   const { user } = useAuth();
 
-  const [repositoryId, setRepositoryId] = useState(
-    defaultRepoId ?? repositories[0]?.id ?? ""
+  const [targetId, setTargetId] = useState(
+    defaultTargetId ?? targets[0]?.id ?? ""
   );
   const [mode, setMode] = useState<ScanMode>("standard");
+  // What each depth costs on this plan, so the price is visible before the
+  // scan runs rather than at the end of the month.
+  const billingQuery = useQuery({
+    queryKey: ["billing", "summary"],
+    queryFn: () => api.billingSummary(),
+    staleTime: 60_000,
+  });
+  const creditCost = billingQuery.data?.usage.credit_cost_by_mode;
+  const creditsLeft =
+    billingQuery.data?.usage.credits_included == null
+      ? null
+      : billingQuery.data.usage.credits_included - billingQuery.data.usage.credits_used;
   const [instructions, setInstructions] = useState("");
   const [authorized, setAuthorized] = useState(false);
 
@@ -51,7 +67,7 @@ export function NewScanDialog({
         queryClient.invalidateQueries({ queryKey: ["me"] });
       }
       return api.createScan({
-        repository_id: repositoryId,
+        target_id: targetId,
         scan_mode: mode,
         custom_instructions: instructions.trim() || null,
       });
@@ -109,19 +125,19 @@ export function NewScanDialog({
         </div>
 
         <div className="space-y-5 px-5 py-5">
-          {/* Repository */}
+          {/* Target */}
           <div>
             <label className="mb-1.5 block font-mono text-[11px] uppercase tracking-wide text-faint">
-              Repository
+              Target
             </label>
             <select
-              value={repositoryId}
-              onChange={(e) => setRepositoryId(e.target.value)}
+              value={targetId}
+              onChange={(e) => setTargetId(e.target.value)}
               className="w-full rounded-lg border border-line bg-ink px-3 py-2.5 text-[13px] text-fg focus:border-cyan/60"
             >
-              {repositories.map((r) => (
-                <option key={r.id} value={r.id}>
-                  {r.name}
+              {targets.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name} ({t.kind})
                 </option>
               ))}
             </select>
@@ -151,10 +167,23 @@ export function NewScanDialog({
                   <span className="mt-0.5 block text-[11px] leading-tight text-muted">
                     {m.blurb}
                   </span>
+                  {creditCost ? (
+                    <span className="mt-1 block font-mono text-[10px] text-faint">
+                      {creditCost[m.value]}{" "}
+                      {creditCost[m.value] === 1 ? "credit" : "credits"}
+                    </span>
+                  ) : null}
                 </button>
               ))}
             </div>
           </div>
+
+          {creditsLeft != null ? (
+            <p className="-mt-2 font-mono text-[11px] text-faint">
+              {creditsLeft} scan {creditsLeft === 1 ? "credit" : "credits"} left
+              this period.
+            </p>
+          ) : null}
 
           {/* Instructions */}
           <div>
@@ -209,7 +238,7 @@ export function NewScanDialog({
           <Button
             icon={Radar}
             loading={mutation.isPending}
-            disabled={!repositoryId || (needsTerms && !authorized)}
+            disabled={!targetId || (needsTerms && !authorized)}
             onClick={() => mutation.mutate()}
           >
             Launch pentest

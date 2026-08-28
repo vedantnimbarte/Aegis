@@ -5,11 +5,13 @@
 
 import {
   LayoutDashboard,
-  GitBranch,
+  Crosshair,
   Radar,
   LogOut,
   CreditCard,
+  Receipt,
   Settings,
+  Users,
 } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
@@ -18,13 +20,16 @@ import type { ReactNode } from "react";
 
 import { useAuth } from "@/lib/auth";
 import { cn } from "./ui";
+import { OrgSwitcher } from "./OrgSwitcher";
 import { VerifyEmailBanner } from "./VerifyEmailBanner";
 
 // `short` is the tab-bar label — the sidebar has room for the full wording.
 const NAV = [
   { href: "/", label: "Overview", short: "Overview", icon: LayoutDashboard, exact: true },
-  { href: "/repos", label: "Repositories", short: "Repos", icon: GitBranch, exact: false },
+  { href: "/targets", label: "Targets", short: "Targets", icon: Crosshair, exact: false },
   { href: "/scans", label: "Scans", short: "Scans", icon: Radar, exact: false },
+  { href: "/team", label: "Team", short: "Team", icon: Users, exact: false },
+  { href: "/costs", label: "Costs", short: "Costs", icon: Receipt, exact: false },
   { href: "/billing", label: "Billing", short: "Billing", icon: CreditCard, exact: false },
   { href: "/settings", label: "Settings", short: "Settings", icon: Settings, exact: false },
 ];
@@ -70,7 +75,8 @@ export function AppShell({ children }: { children: ReactNode }) {
           })}
         </nav>
 
-        <div className="border-t border-line p-3">
+        <div className="space-y-2 border-t border-line p-3">
+          <OrgSwitcher />
           <div className="flex items-center gap-3 rounded-lg px-3 py-2">
             <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full border border-line bg-surface font-mono text-[12px] uppercase text-cyan-soft">
               {(user?.email ?? "?").charAt(0)}

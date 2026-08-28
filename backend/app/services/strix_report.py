@@ -46,6 +46,10 @@ class ParsedFinding:
     # Concrete before/after code fixes Strix suggested, for auto-fix PRs:
     # a list of {"file", "fix_before", "fix_after"} (None if none applicable).
     suggested_fix: Optional[list[dict]] = None
+    # What was actually observed: the request/response exchange, the PoC's
+    # output, and the endpoint it was aimed at. Enriched by the worker with
+    # run context before it is stored (see services/evidence.py).
+    evidence: Optional[dict] = None
 
 
 def parse_report(run_dir: Path) -> list[ParsedFinding]:
@@ -90,7 +94,41 @@ def _map_finding(item: dict[str, Any]) -> ParsedFinding:
         cvss_score=_coerce_float(item.get("cvss")),
         file_path=_primary_file_path(item),
         suggested_fix=_extract_fixes(item),
+        evidence=_extract_evidence(item),
     )
+
+
+# Strix has no stable schema for the exchange it observed, so each field is
+# looked up under the names its report writer has used. Missing keys are
+# normal: a partial evidence bundle still lets a reviewer confirm a finding,
+# and an absent one is far better than a fabricated one.
+_REQUEST_KEYS = ("http_request", "request", "raw_request", "poc_request")
+_RESPONSE_KEYS = ("http_response", "response", "raw_response", "poc_response")
+_OUTPUT_KEYS = ("poc_output", "poc_result", "exploit_output", "output")
+
+
+def _first_present(item: dict[str, Any], keys: tuple[str, ...]) -> Optional[str]:
+    for key in keys:
+        text = _coerce_str(item.get(key))
+        if text:
+            return text
+    return None
+
+
+def _extract_evidence(item: dict[str, Any]) -> Optional[dict]:
+    """Pull whatever proof the engine recorded for this finding."""
+    method = _coerce_str(item.get("method"))
+    endpoint = _coerce_str(item.get("endpoint"))
+    evidence = {
+        "request": _first_present(item, _REQUEST_KEYS),
+        "response": _first_present(item, _RESPONSE_KEYS),
+        "poc_output": _first_present(item, _OUTPUT_KEYS),
+        "target_url": endpoint or _coerce_str(item.get("target")) or None,
+        "method": method or None,
+        "notes": _coerce_str(item.get("poc_description")) or None,
+    }
+    populated = {k: v for k, v in evidence.items() if v}
+    return populated or None
 
 
 def _extract_fixes(item: dict[str, Any]) -> Optional[list[dict]]:

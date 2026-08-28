@@ -1,4 +1,4 @@
-"""Greybox model — authenticated (behind-login) testing config for a repo.
+"""Greybox model — authenticated (behind-login) testing config for a target.
 
 Holds a live target URL plus test credentials so Strix can log in and exercise
 authenticated functionality. Secret fields (``password``, ``extra``) are
@@ -18,18 +18,18 @@ from app.core.encryption import EncryptedString
 from app.db.base_class import Base, TimestampMixin, UUIDMixin
 
 if TYPE_CHECKING:
-    from app.models.repository import Repository
+    from app.models.target import Target
 
 
 class GreyboxConfig(UUIDMixin, TimestampMixin, Base):
     __tablename__ = "greybox_configs"
     __table_args__ = (
-        UniqueConstraint("repository_id", name="uq_greybox_repository"),
+        UniqueConstraint("target_id", name="uq_greybox_target"),
     )
 
-    repository_id: Mapped[uuid.UUID] = mapped_column(
+    target_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("repositories.id", ondelete="CASCADE"),
+        ForeignKey("targets.id", ondelete="CASCADE"),
         index=True,
         nullable=False,
     )
@@ -44,7 +44,7 @@ class GreyboxConfig(UUIDMixin, TimestampMixin, Base):
     # Free-form auth material: headers, cookies, tokens, or notes.
     extra: Mapped[Optional[str]] = mapped_column(EncryptedString(4096), nullable=True)
 
-    repository: Mapped["Repository"] = relationship(back_populates="greybox")
+    target: Mapped["Target"] = relationship(back_populates="greybox")
 
     def __repr__(self) -> str:  # pragma: no cover
-        return f"<GreyboxConfig repo={self.repository_id} target={self.target_url!r}>"
+        return f"<GreyboxConfig target={self.target_id} url={self.target_url!r}>"

@@ -2,11 +2,16 @@
 
 Flow (see specs §4):
   1. Mark the Scan ``running`` and stamp ``started_at``.
-  2. Check out the target repo into a per-scan working directory.
-  3. Run Strix headless against the checkout (it spawns its own sandbox).
+  2. Prepare the target: clone a repository, or address a live endpoint.
+  3. Run Strix headless against it (it spawns its own sandbox).
   4. Parse ``strix_runs/<run>/vulnerabilities.json`` into findings.
-  5. Persist findings, mark the Scan ``completed``, and clean up.
+  5. Persist findings with their evidence, compute attack chains, mark the
+     Scan ``completed``, and clean up.
 On any failure the Scan is marked ``failed`` with the error message.
+
+A retest is the same machinery pointed at one question — "does this exploit
+still work?" — and its result is written to the finding's triage row rather
+than reported as a fresh survey.
 """
 from __future__ import annotations
 
@@ -22,19 +27,35 @@ from celery.utils.log import get_task_logger
 
 from app.core.config import settings
 from app.db.session import SessionLocal
-from app.models.enums import ScanStatus, ScanTrigger, Severity
+from app.models.enums import (
+    RetestOutcome,
+    ScanStatus,
+    ScanTrigger,
+    Severity,
+    TargetKind,
+)
 from app.models.scan import Scan
+from app.models.target import Target
 from app.models.vulnerability import Vulnerability
 from app.services import (
+    ai_testing,
+    api_spec,
+    attack_paths,
+    audit_service,
     billing_plans,
+    evidence as evidence_service,
     finding_identity,
+    gate,
     github_app,
     greybox_instructions,
     notifications,
     repo_checkout,
+    retest as retest_service,
     scan_progress,
+    source_hosts,
     strix_report,
     strix_runner,
+    triage_service,
 )
 from app.workers.celery_app import celery
 
@@ -70,61 +91,43 @@ def run_strix_scan(self, scan_id: str) -> dict:
             logger.warning("Scan %s no longer exists; nothing to do", scan_id)
             return {"scan_id": scan_id, "status": "missing"}
 
-        repo = scan.repository
+        target = scan.target
         is_pr = _is_pr_scan(scan)
 
         _mark_running(db, scan)
-        logger.info("Scan %s running: repo=%s mode=%s", scan_id, repo.name, scan.scan_mode.value)
-
-        # PR scans clone with a GitHub App installation token at the PR commit;
-        # everything else clones the default branch with the user's OAuth token.
-        if is_pr:
-            clone_token = github_app.get_installation_token(scan.github_installation_id)
-            clone_ref = scan.github_commit_sha
-            _start_pr_check(db, scan, clone_token)
-        else:
-            clone_token = repo.user.github_token  # decrypted on read
-            clone_ref = None
-
-        repo_dir = workdir / "repo"
-        repo_checkout.clone_repository(
-            repo.url, repo_dir, github_token=clone_token, ref=clone_ref
+        logger.info(
+            "Scan %s running: target=%s kind=%s mode=%s",
+            scan_id, target.name, target.kind.value, scan.scan_mode.value,
         )
 
-        # BYOK: Pro/Enterprise users may run scans on their own LLM key/model.
-        byok_model, byok_key = _byok_credentials(repo.user)
+        repo_dir = _prepare_source(db, scan, target, workdir) if target.needs_checkout else None
+        model, api_key = _llm_credentials(db, target)
 
-        # Grey-box: authenticated dynamic testing against a live target, with
-        # credentials passed via a mode-0600 instruction file (never on argv).
-        greybox = repo.greybox
-        if greybox is not None:
-            instruction_file = _write_greybox_instructions(workdir, greybox, scan)
-            run_dir = strix_runner.run_strix(
-                target_dir=repo_dir,
-                scan_mode=scan.scan_mode.value,
-                workdir=workdir,
-                instruction_file=instruction_file,
-                extra_targets=[greybox.target_url],
-                llm_model=byok_model,
-                llm_api_key=byok_key,
-            )
-        else:
-            run_dir = strix_runner.run_strix(
-                target_dir=repo_dir,
-                scan_mode=scan.scan_mode.value,
-                workdir=workdir,
-                instruction=scan.custom_instructions,
-                llm_model=byok_model,
-                llm_api_key=byok_key,
-            )
+        plan = _build_plan(db, scan, target, workdir, repo_dir)
+        run_dir = strix_runner.run_strix(
+            target_dir=repo_dir,
+            extra_targets=plan.extra_targets,
+            scan_mode=scan.scan_mode.value,
+            workdir=workdir,
+            instruction=plan.instruction,
+            instruction_file=plan.instruction_file,
+            llm_model=model,
+            llm_api_key=api_key,
+            max_budget_usd=target.max_budget_usd,
+        )
 
         findings = strix_report.parse_report(run_dir)
-        _persist_findings(db, scan, findings)
-        _record_usage(db, scan, workdir)
+        _persist_findings(db, scan, target, findings, plan.commit_sha, model)
+        _record_usage(db, scan, workdir, model)
         _mark_completed(db, scan)
 
+        if scan.is_retest:
+            _record_retest_result(db, scan, target, findings, model, plan.commit_sha)
+        else:
+            _store_attack_chains(db, scan)
+
         if is_pr:
-            _report_pr_result(scan, findings)
+            _report_pr_result(db, scan, target, findings)
         _notify(db, scan_id, ScanStatus.COMPLETED.value, findings)
 
         logger.info("Scan %s completed with %d finding(s)", scan_id, len(findings))
@@ -132,29 +135,201 @@ def run_strix_scan(self, scan_id: str) -> dict:
 
     except SoftTimeLimitExceeded:
         _fail(db, scan_id, "Scan exceeded the maximum allowed run time.")
+        _mark_retest_inconclusive(db, scan_id)
         _report_pr_failure(db, scan_id)
         _notify(db, scan_id, ScanStatus.FAILED.value)
         raise
     except (
         repo_checkout.CheckoutError,
         strix_runner.StrixError,
+        source_hosts.SourceHostError,
         ValueError,
     ) as exc:
         # Expected, user-actionable failures (bad repo, engine/report error).
         logger.warning("Scan %s failed: %s", scan_id, exc)
         _fail(db, scan_id, str(exc))
+        _mark_retest_inconclusive(db, scan_id)
         _report_pr_failure(db, scan_id)
         _notify(db, scan_id, ScanStatus.FAILED.value)
         return {"scan_id": scan_id, "status": ScanStatus.FAILED.value}
     except Exception as exc:  # noqa: BLE001 - last-resort guard so the row never stays 'running'
         logger.exception("Scan %s failed unexpectedly", scan_id)
         _fail(db, scan_id, f"Unexpected error: {exc}")
+        _mark_retest_inconclusive(db, scan_id)
         _report_pr_failure(db, scan_id)
         _notify(db, scan_id, ScanStatus.FAILED.value)
         return {"scan_id": scan_id, "status": ScanStatus.FAILED.value}
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
         db.close()
+
+
+# --- Run planning ---------------------------------------------------------
+class _RunPlan:
+    """How this particular target gets attacked.
+
+    Assembled in one place because the differences between kinds are all
+    decided here: which URLs go on the command line, whether credentials need
+    an instruction *file* rather than an argument, and what the agents are
+    told to look for.
+    """
+
+    def __init__(self) -> None:
+        self.extra_targets: list[str] = []
+        self.instruction: Optional[str] = None
+        self.instruction_file: Optional[Path] = None
+        self.commit_sha: Optional[str] = None
+
+
+def _build_plan(
+    db, scan: Scan, target: Target, workdir: Path, repo_dir: Optional[Path]
+) -> _RunPlan:
+    plan = _RunPlan()
+    plan.commit_sha = scan.github_commit_sha
+    greybox = target.greybox
+    live_url = target.live_url
+
+    if live_url:
+        plan.extra_targets.append(live_url)
+
+    # A retest overrides everything else: it exists to answer one question,
+    # and a broader instruction would turn it back into a survey.
+    if scan.is_retest and scan.retest_fingerprint:
+        plan.instruction = _retest_instruction(db, scan, target, live_url)
+        return plan
+
+    # AI-layer targets get the OWASP GenAI test plan rather than a web one.
+    if ai_testing.supports(target.kind) and live_url:
+        plan.instruction = ai_testing.build_instruction(
+            target.kind,
+            target_url=live_url,
+            custom_instructions=scan.custom_instructions,
+            auth_notes=_auth_notes(greybox),
+        )
+        return plan
+
+    # Credentials never go on the command line, so grey-box uses a 0600 file.
+    if greybox is not None:
+        plan.instruction_file = _write_greybox_instructions(workdir, greybox, scan)
+        return plan
+
+    instructions: list[str] = []
+    if scan.custom_instructions and scan.custom_instructions.strip():
+        instructions.append(scan.custom_instructions.strip())
+
+    # An API target with routes derived from source gets them as context; a
+    # scanner with no route list crawls a single-page app and finds nothing.
+    spec_note = _api_spec_note(db, target, repo_dir)
+    if spec_note:
+        instructions.append(spec_note)
+
+    plan.instruction = "\n\n".join(instructions) or None
+    return plan
+
+
+def _auth_notes(greybox) -> Optional[str]:
+    """Credentials for an AI-layer target, if the team configured any."""
+    if greybox is None:
+        return None
+    bits = []
+    if greybox.username:
+        bits.append(f'username "{greybox.username}"')
+    if greybox.password:
+        bits.append(f'password "{greybox.password}"')
+    if greybox.extra:
+        bits.append(greybox.extra)
+    return "; ".join(bits) or None
+
+
+def _retest_instruction(
+    db, scan: Scan, target: Target, live_url: Optional[str]
+) -> str:
+    """Rebuild the exploit brief for the single finding under retest."""
+    from app.services import scan_service
+
+    finding = scan_service.find_latest_finding(
+        db, target.id, scan.retest_fingerprint or ""
+    )
+    if finding is None:
+        # The finding was deleted with its scan. Nothing to re-run.
+        raise ValueError("The finding to retest no longer exists.")
+    return retest_service.build_instruction(
+        title=finding.title,
+        fingerprint=scan.retest_fingerprint or "",
+        description=finding.description,
+        poc_code=finding.poc_code,
+        file_path=finding.file_path,
+        target_url=live_url,
+        remediation=finding.remediation,
+    )
+
+
+def _api_spec_note(db, target: Target, repo_dir: Optional[Path]) -> Optional[str]:
+    """Derive routes from the checkout and describe them for the agents.
+
+    Best-effort throughout: a repository we cannot read routes out of is the
+    normal case for plenty of stacks, and it must never fail a scan.
+    """
+    if not settings.API_SPEC_ENABLED or repo_dir is None:
+        return None
+    try:
+        document = api_spec.derive_spec(
+            repo_dir,
+            title=target.name,
+            server_url=target.live_url,
+            max_files=settings.API_SPEC_MAX_FILES,
+            max_file_bytes=settings.API_SPEC_MAX_FILE_BYTES,
+        )
+    except Exception:  # noqa: BLE001 - route inference is an optimization
+        logger.warning("API spec inference failed for target %s", target.id, exc_info=True)
+        return None
+    if not document:
+        return None
+
+    try:
+        target.derived_spec = document
+        db.commit()
+    except Exception:  # noqa: BLE001
+        db.rollback()
+
+    routes = sorted(document.get("paths", {}).keys())
+    logger.info("Target %s: %s", target.id, api_spec.summarize(document))
+    listed = "\n".join(f"- {path}" for path in routes[:200])
+    return (
+        "# API routes discovered in source\n\n"
+        "These endpoints were derived from the application's own code. Exercise "
+        "them directly rather than relying on crawling, and test each for broken "
+        "object-level authorization (BOLA), broken function-level authorization "
+        "(BFLA), IDOR, and missing authentication.\n\n" + listed
+    )
+
+
+def _prepare_source(db, scan: Scan, target: Target, workdir: Path) -> Path:
+    """Clone the target repository, using the right credential for its host."""
+    is_pr = _is_pr_scan(scan)
+    repo_dir = workdir / "repo"
+
+    if is_pr:
+        # PR scans clone with a GitHub App installation token at the PR commit.
+        token = github_app.get_installation_token(scan.github_installation_id)
+        username = "x-access-token"
+        ref = scan.github_commit_sha
+        _start_pr_check(db, scan, token)
+    else:
+        owner = target.organization.owner
+        provider = target.provider
+        token = source_hosts.token_for(owner, provider) if provider else None
+        username = source_hosts.clone_username(provider) if provider else "x-access-token"
+        ref = None
+
+    repo_checkout.clone_repository(
+        target.clone_url,
+        repo_dir,
+        github_token=token,
+        token_username=username,
+        ref=ref,
+    )
+    return repo_dir
 
 
 # --- GitHub pull-request feedback ----------------------------------------
@@ -173,15 +348,19 @@ def _report_url(scan: Scan) -> str:
     return f"{settings.DASHBOARD_URL}/scans/{scan.id}"
 
 
-def _byok_credentials(user) -> tuple[Optional[str], Optional[str]]:
-    """The user's own LLM model/key if they set one and their tier allows BYOK.
+def _llm_credentials(db, target: Target) -> tuple[Optional[str], Optional[str]]:
+    """The model and key this scan runs on.
 
-    Returns ``(None, None)`` otherwise, so the runner falls back to the shared
-    platform config.
+    BYOK when the organization's billing user set one and their tier allows
+    it; otherwise the platform's shared configuration. The model is returned
+    either way so it can be recorded as evidence provenance.
     """
-    if user.llm_api_key and billing_plans.limits_for(user.subscription_tier).byok:
-        return user.llm_model, user.llm_api_key
-    return None, None
+    from app.services import org_service
+
+    payer = org_service.billing_user(db, target.organization)
+    if payer.llm_api_key and billing_plans.limits_for(payer.subscription_tier).byok:
+        return payer.llm_model or settings.STRIX_LLM, payer.llm_api_key
+    return settings.STRIX_LLM, None
 
 
 def _notify(db, scan_id: str, status: str, findings=None) -> None:
@@ -195,21 +374,22 @@ def _notify(db, scan_id: str, status: str, findings=None) -> None:
     scan = db.get(Scan, uuid.UUID(scan_id))
     if scan is None:
         return
-    user = scan.repository.user
+    from app.services import org_service
+
+    target = scan.target
+    user = org_service.billing_user(db, target.organization)
     counts = _severity_counts(findings) if findings else {}
     total = len(findings) if findings else 0
-    report_url = _report_url(scan)
-    repo_name = scan.repository.name
 
     notifications.notify_scan_finished(
         # PR scans already report in the pull request itself, so skip email.
         email_to=None if _is_pr_scan(scan) else user.email,
         slack_webhook_url=user.slack_webhook_url,
-        repo_name=repo_name,
+        repo_name=target.name,
         status=status,
         total=total,
         counts=counts,
-        report_url=report_url,
+        report_url=_report_url(scan),
     )
 
 
@@ -217,7 +397,7 @@ def _start_pr_check(db, scan: Scan, token: str) -> None:
     """Open an in-progress check run so the PR shows Aegis is running."""
     try:
         check_run_id = github_app.create_check_run(
-            token, scan.repository.name, scan.github_commit_sha
+            token, scan.target.name, scan.github_commit_sha
         )
         if check_run_id:
             scan.github_check_run_id = check_run_id
@@ -226,25 +406,44 @@ def _start_pr_check(db, scan: Scan, token: str) -> None:
         logger.exception("Failed to open check run for scan %s", scan.id)
 
 
-def _report_pr_result(scan: Scan, findings: list[strix_report.ParsedFinding]) -> None:
+def _report_pr_result(
+    db, scan: Scan, target: Target, findings: list[strix_report.ParsedFinding]
+) -> None:
+    """Comment on the PR and complete the check run, blocking only on new findings."""
     try:
         counts = _severity_counts(findings)
         total = len(findings)
         token = github_app.get_installation_token(scan.github_installation_id)
-        repo_full = scan.repository.name
+        repo_full = target.name
+
+        # Decide from the persisted rows, which carry the fingerprints the
+        # diff is computed over — the parsed findings do not have them.
+        persisted = list(scan.vulnerabilities)
+        diff = triage_service.diff_against_previous(db, scan)
+        decision = gate.decide(
+            persisted,
+            target=target,
+            new_fingerprints=set(diff.new_fingerprints),
+            has_baseline=diff.has_baseline,
+        )
 
         body = github_app.format_findings_comment(
-            counts, findings, total=total, report_url=_report_url(scan)
+            counts,
+            persisted,
+            total=total,
+            report_url=_report_url(scan),
+            decision=decision,
+            new_fingerprints=set(diff.new_fingerprints),
         )
         github_app.upsert_pr_comment(token, repo_full, scan.github_pr_number, body)
 
         if scan.github_check_run_id:
-            title, summary = github_app.check_summary(total, counts)
+            title, summary = github_app.check_summary_for(decision, counts)
             github_app.update_check_run(
                 token,
                 repo_full,
                 scan.github_check_run_id,
-                conclusion=github_app.check_conclusion(counts),
+                conclusion=decision.conclusion,
                 title=title,
                 summary=summary,
             )
@@ -260,7 +459,7 @@ def _report_pr_failure(db, scan_id: str) -> None:
         token = github_app.get_installation_token(scan.github_installation_id)
         github_app.update_check_run(
             token,
-            scan.repository.name,
+            scan.target.name,
             scan.github_check_run_id,
             conclusion="neutral",
             title="Scan did not complete",
@@ -284,6 +483,7 @@ def _write_greybox_instructions(workdir: Path, greybox, scan: Scan) -> Path:
         extra=greybox.extra,
         custom_instructions=scan.custom_instructions,
     )
+    workdir.mkdir(parents=True, exist_ok=True)
     path = workdir / "instructions.txt"
     path.write_text(text, encoding="utf-8")
     try:
@@ -306,7 +506,16 @@ def _mark_completed(db, scan: Scan) -> None:
     db.commit()
 
 
-def _persist_findings(db, scan: Scan, findings: list[strix_report.ParsedFinding]) -> None:
+def _persist_findings(
+    db,
+    scan: Scan,
+    target: Target,
+    findings: list[strix_report.ParsedFinding],
+    commit_sha: Optional[str],
+    model: Optional[str],
+) -> None:
+    """Store findings, each with the evidence that lets a human verify it."""
+    observed = _now()
     for f in findings:
         db.add(
             Vulnerability(
@@ -320,6 +529,16 @@ def _persist_findings(db, scan: Scan, findings: list[strix_report.ParsedFinding]
                 cvss_score=f.cvss_score,
                 file_path=f.file_path,
                 suggested_fix=f.suggested_fix,
+                # What was actually observed — redacted and bounded. Without
+                # this a finding is an assertion; with it, it is a receipt.
+                evidence=evidence_service.build(
+                    f.evidence,
+                    engine="Strix",
+                    model=model,
+                    target_url=target.live_url,
+                    commit_sha=commit_sha,
+                    observed_at=observed,
+                ),
                 # Identity that survives re-scans, so this finding can be
                 # diffed and triaged against future runs.
                 fingerprint=finding_identity.fingerprint(
@@ -330,14 +549,120 @@ def _persist_findings(db, scan: Scan, findings: list[strix_report.ParsedFinding]
             )
         )
     db.flush()
+    db.commit()
 
 
-def _record_usage(db, scan: Scan, workdir: Path) -> None:
+def _store_attack_chains(db, scan: Scan) -> None:
+    """Compose the findings into chains and store them on the scan.
+
+    Suppressed findings are excluded: chaining something a human already
+    dismissed would resurrect it at a higher severity through the back door.
+    """
+    try:
+        triage = triage_service.triage_map(db, scan.target_id)
+        live = [
+            v
+            for v in scan.vulnerabilities
+            if not (
+                v.fingerprint
+                and v.fingerprint in triage
+                and triage[v.fingerprint].status in triage_service.SUPPRESSED_STATUSES
+            )
+        ]
+        chains = attack_paths.build_chains(live)
+        scan.attack_chains = attack_paths.serialize(chains) or None
+        db.commit()
+        if chains:
+            logger.info("Scan %s: %d attack chain(s) identified", scan.id, len(chains))
+    except Exception:  # noqa: BLE001 - chaining is analysis, not the report
+        logger.warning("Could not compute attack chains for %s", scan.id, exc_info=True)
+        db.rollback()
+
+
+def _record_retest_result(
+    db,
+    scan: Scan,
+    target: Target,
+    findings: list[strix_report.ParsedFinding],
+    model: Optional[str],
+    commit_sha: Optional[str],
+) -> None:
+    """Turn a completed retest into a verdict on the finding it re-checked."""
+    fingerprint = scan.retest_fingerprint or ""
+    if not fingerprint:
+        return
+
+    reported = {
+        finding_identity.fingerprint(
+            title=f.title, file_path=f.file_path, classification=f.owasp_category
+        )
+        for f in findings
+    }
+    outcome = retest_service.decide_outcome(
+        completed=True, reported_fingerprints=reported, fingerprint=fingerprint
+    )
+    still_there = next(
+        (v for v in scan.vulnerabilities if v.fingerprint == fingerprint), None
+    )
+    triage_service.record_retest(
+        db,
+        target_id=target.id,
+        fingerprint=fingerprint,
+        outcome=outcome,
+        scan_id=scan.id,
+        evidence=retest_service.build_evidence(
+            outcome,
+            scan_id=scan.id,
+            finding=still_there,
+            engine="Strix",
+            model=model,
+            target_url=target.live_url,
+            commit_sha=commit_sha,
+        ),
+    )
+    scan.retest_outcome = outcome
+    db.commit()
+    logger.info("Retest %s for %s: %s", scan.id, fingerprint[:12], outcome.value)
+
+
+def _mark_retest_inconclusive(db, scan_id: str) -> None:
+    """A retest that could not run proves nothing — say so, never "fixed".
+
+    This is the failure mode that would cost the product its credibility: a
+    tool that reports a vulnerability as remediated because it crashed before
+    checking is worse than one that reports nothing at all.
+    """
+    db.rollback()
+    scan = db.get(Scan, uuid.UUID(scan_id))
+    if scan is None or not scan.is_retest or not scan.retest_fingerprint:
+        return
+    try:
+        triage_service.record_retest(
+            db,
+            target_id=scan.target_id,
+            fingerprint=scan.retest_fingerprint,
+            outcome=RetestOutcome.INCONCLUSIVE,
+            scan_id=scan.id,
+            evidence=retest_service.build_evidence(
+                RetestOutcome.INCONCLUSIVE,
+                scan_id=scan.id,
+                error=scan.error_message,
+            ),
+        )
+        scan.retest_outcome = RetestOutcome.INCONCLUSIVE
+        db.commit()
+    except Exception:  # noqa: BLE001
+        logger.warning("Could not record inconclusive retest for %s", scan_id, exc_info=True)
+        db.rollback()
+
+
+def _record_usage(db, scan: Scan, workdir: Path, model: Optional[str]) -> None:
     """Persist the run's LLM spend before the working directory is deleted.
 
     Best-effort: usage reporting must never turn a completed scan into a
     failed one, so any problem reading the run state is swallowed.
     """
+    scan.engine_model = model
     try:
         usage = scan_progress.read_progress(workdir)
     except Exception:  # noqa: BLE001 - accounting is not worth failing a scan
@@ -372,11 +697,11 @@ def enqueue_due_scheduled_scans(self) -> dict:
 
     For each due schedule we advance ``next_run_at`` first (so a transient
     error can't cause a tight re-dispatch loop), then enqueue a scan — but only
-    if the owner is still entitled (verified email + active subscription within
-    quota). Un-entitled schedules are skipped and retried next period.
+    if the organization is still entitled (verified email + active subscription
+    within quota). Un-entitled schedules are skipped and retried next period.
     """
     # Imported lazily to avoid a circular import (scan_service imports this module).
-    from app.services import billing, scan_service, schedule_service
+    from app.services import billing, org_service, scan_service, schedule_service
 
     db = SessionLocal()
     dispatched = 0
@@ -386,21 +711,23 @@ def enqueue_due_scheduled_scans(self) -> dict:
         for schedule in due:
             schedule_service.advance_after_dispatch(db, schedule)
 
-            repo = schedule.repository
-            user = repo.user
-            if not user.email_verified or not user.has_accepted_scan_terms:
+            target = schedule.target
+            org = target.organization
+            payer = org_service.billing_user(db, org)
+            if not payer.email_verified or not payer.has_accepted_scan_terms:
                 skipped += 1
                 continue
             try:
-                billing.assert_can_create_scan(db, user)
+                billing.assert_can_create_scan(db, org, scan_mode=schedule.scan_mode)
             except billing.PaymentRequiredError:
                 skipped += 1
                 continue
 
             scan_service.create_scan(
                 db,
-                user=user,
-                repository_id=repo.id,
+                org=org,
+                actor=None,
+                target_id=target.id,
                 scan_mode=schedule.scan_mode,
                 custom_instructions=schedule.custom_instructions,
                 trigger=ScanTrigger.SCHEDULED,
@@ -418,3 +745,126 @@ def enqueue_due_scheduled_scans(self) -> dict:
         return {"dispatched": dispatched, "skipped": skipped, "error": True}
     finally:
         db.close()
+
+
+@celery.task(name="app.workers.tasks.run_asset_discovery", bind=True)
+def run_asset_discovery(self) -> dict:
+    """Beat tick: enumerate the attack surface of discovery-enabled targets.
+
+    Newly found hosts are recorded as targets in their own right — discovered
+    rather than typed in, which is the whole point — and the organization is
+    notified. They are *not* scanned automatically: pointing exploits at a host
+    nobody has confirmed is theirs is exactly what the authorization gate
+    exists to prevent.
+    """
+    from datetime import timedelta
+
+    from sqlalchemy import select
+
+    from app.services import asm
+
+    if not settings.ASM_ENABLED:
+        return {"skipped": "disabled"}
+
+    db = SessionLocal()
+    swept = 0
+    found = 0
+    try:
+        cutoff = _now() - timedelta(hours=settings.ASM_INTERVAL_HOURS)
+        targets = list(
+            db.execute(
+                select(Target).where(
+                    Target.discovery_enabled.is_(True),
+                    Target.url.is_not(None),
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for target in targets:
+            # updated_at doubles as "last swept": discovery writes to the row
+            # whenever it finds something, and a target nobody has touched in
+            # the interval is due either way.
+            if target.updated_at and target.updated_at > cutoff:
+                continue
+            swept += 1
+            found += _sweep_target(db, target)
+
+        if swept:
+            logger.info("Asset discovery: %d target(s) swept, %d new asset(s)", swept, found)
+        return {"swept": swept, "discovered": found}
+    except Exception:  # noqa: BLE001 - a beat tick must never crash the worker
+        logger.exception("run_asset_discovery failed")
+        db.rollback()
+        return {"swept": swept, "discovered": found, "error": True}
+    finally:
+        db.close()
+
+
+def _sweep_target(db, target: Target) -> int:
+    """Discover and record new hosts under one target's domain."""
+    from app.services import asm, target_service
+
+    org = target.organization
+    known = [t.url or t.name for t in target_service.list_targets(db, org)]
+    try:
+        hosts = asm.discover(target.url or "", known_hosts=known)
+    except asm.DiscoveryError as exc:
+        logger.info("Discovery for %s skipped: %s", target.name, exc)
+        return 0
+
+    created = 0
+    for host in hosts:
+        try:
+            new_target = target_service.create_target(
+                db,
+                org=org,
+                creator=None,
+                kind=TargetKind.WEB,
+                values={
+                    "name": host.hostname,
+                    "url": host.url or f"https://{host.hostname}",
+                    "discovered_from_id": target.id,
+                },
+            )
+        except Exception:  # noqa: BLE001 - one bad host must not stop the sweep
+            logger.warning("Could not record discovered host %s", host.hostname, exc_info=True)
+            db.rollback()
+            continue
+        created += 1
+        audit_service.record(
+            db,
+            organization_id=org.id,
+            action=audit_service.TARGET_DISCOVERED,
+            subject_type="target",
+            subject_id=new_target.id,
+            detail={
+                "hostname": host.hostname,
+                "status_code": host.status_code,
+                "title": host.title,
+                "discovered_from": str(target.id),
+            },
+        )
+
+    if created:
+        _notify_discovery(db, org, target, hosts)
+    return created
+
+
+def _notify_discovery(db, org, source: Target, hosts: list) -> None:
+    """Tell the organization what appeared, best-effort."""
+    from app.services import org_service
+
+    try:
+        payer = org_service.billing_user(db, org)
+        names = ", ".join(h.hostname for h in hosts[:10])
+        notifications.notify_assets_discovered(
+            email_to=payer.email,
+            slack_webhook_url=payer.slack_webhook_url,
+            source_name=source.name,
+            hostnames=[h.hostname for h in hosts],
+            summary=names,
+            dashboard_url=f"{settings.DASHBOARD_URL}/targets",
+        )
+    except Exception:  # noqa: BLE001
+        logger.warning("Could not notify discovery for org %s", org.id, exc_info=True)

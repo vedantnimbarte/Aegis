@@ -1,7 +1,7 @@
 """Recurring-scan schedule persistence and the scheduler's due-query.
 
-Every lookup joins through Repository so a user only ever sees schedules for
-repositories they own (tenant isolation, spec §5).
+Every lookup joins through Target so a caller only ever sees schedules for
+targets their organization owns (tenant isolation, spec §5).
 """
 from __future__ import annotations
 
@@ -12,54 +12,56 @@ from typing import Optional, Sequence
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models.repository import Repository
+from app.models.organization import Organization
 from app.models.schedule import Schedule
-from app.models.user import User
+from app.models.target import Target
 from app.schemas.schedule import ScheduleCreate, ScheduleUpdate
-from app.services import repo_service, schedule_planner
+from app.services import schedule_planner, target_service
 
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def list_schedules(db: Session, user: User) -> Sequence[Schedule]:
+def list_schedules(db: Session, org: Organization) -> Sequence[Schedule]:
     return db.execute(
         select(Schedule)
-        .join(Repository)
-        .where(Repository.user_id == user.id)
+        .join(Target)
+        .where(Target.organization_id == org.id)
         .order_by(Schedule.created_at.desc())
     ).scalars().all()
 
 
-def get_schedule(db: Session, schedule_id: uuid.UUID, user: User) -> Optional[Schedule]:
+def get_schedule(
+    db: Session, schedule_id: uuid.UUID, org: Organization
+) -> Optional[Schedule]:
     return db.execute(
         select(Schedule)
-        .join(Repository)
-        .where(Schedule.id == schedule_id, Repository.user_id == user.id)
+        .join(Target)
+        .where(Schedule.id == schedule_id, Target.organization_id == org.id)
     ).scalar_one_or_none()
 
 
 def create_schedule(
-    db: Session, user: User, payload: ScheduleCreate
+    db: Session, org: Organization, payload: ScheduleCreate
 ) -> tuple[Optional[Schedule], str]:
-    """Create a schedule for a user-owned repo.
+    """Create a schedule for an org-owned target.
 
     Returns ``(schedule, "")`` on success, or ``(None, code)`` where code is
-    ``"repo_not_found"`` or ``"exists"`` (a repo already has a schedule).
+    ``"target_not_found"`` or ``"exists"`` (a target already has a schedule).
     """
-    repo = repo_service.get_repository(db, payload.repository_id, user)
-    if repo is None:
-        return None, "repo_not_found"
+    target = target_service.get_target(db, payload.target_id, org)
+    if target is None:
+        return None, "target_not_found"
 
     existing = db.execute(
-        select(Schedule).where(Schedule.repository_id == repo.id)
+        select(Schedule).where(Schedule.target_id == target.id)
     ).scalar_one_or_none()
     if existing is not None:
         return None, "exists"
 
     schedule = Schedule(
-        repository_id=repo.id,
+        target_id=target.id,
         frequency=payload.frequency,
         scan_mode=payload.scan_mode,
         custom_instructions=payload.custom_instructions,

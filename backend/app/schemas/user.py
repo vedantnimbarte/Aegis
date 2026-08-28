@@ -1,6 +1,7 @@
 """User response schemas.
 
-Note: `github_token` and `hashed_password` are deliberately never exposed.
+Note: tokens, API keys and `hashed_password` are deliberately never exposed —
+reads return only booleans saying whether each is configured.
 """
 from __future__ import annotations
 
@@ -31,15 +32,32 @@ class UserRead(BaseModel):
     llm_model: str | None = None
     has_llm_key: bool = False
     has_slack: bool = False
+    has_jira: bool = False
+    has_linear: bool = False
+    jira_url: str | None = None
+    jira_project_key: str | None = None
+    linear_team_id: str | None = None
 
 
 class UserIntegrationsUpdate(BaseModel):
     """Partial update of a user's integration settings.
 
     Only fields that are present are changed (PATCH semantics). An explicit
-    empty string clears that setting. The LLM key is write-only.
+    empty string clears that setting. Every credential field is write-only.
     """
 
     llm_model: str | None = None
     llm_api_key: str | None = None
     slack_webhook_url: str | None = None
+    webhook_url: str | None = None
+    webhook_secret: str | None = None
+    # Source hosts beyond GitHub.
+    gitlab_token: str | None = None
+    bitbucket_token: str | None = None
+    # Issue trackers.
+    jira_url: str | None = None
+    jira_email: str | None = None
+    jira_api_token: str | None = None
+    jira_project_key: str | None = None
+    linear_api_key: str | None = None
+    linear_team_id: str | None = None
