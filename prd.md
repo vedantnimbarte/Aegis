@@ -1,5 +1,11 @@
 # Product Requirements Document (PRD): Continuous Pentesting SaaS
 
+> **Historical document.** This is the original PRD the product was built
+> against, kept for provenance. It describes the MVP scope; the product has
+> since grown organizations and roles, targets beyond repositories (live
+> apps, APIs, LLM applications, MCP servers), evidence and verification
+> retests, and credit-based pricing. The README is the current description.
+
 ## 1. Product Overview
 **Product Name:** AutoPentest (Placeholder)  
 **Tagline:** Continuous, AI-driven penetration testing that acts like a real hacker.  

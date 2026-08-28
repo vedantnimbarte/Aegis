@@ -1,5 +1,11 @@
 # Technical Specification Document: AutoPentest SaaS
 
+> **Historical document.** This is the original technical specification,
+> kept for provenance. The schema and endpoint tables below predate the
+> organizations/targets model (migration `0013_organizations_and_targets`)
+> and no longer match the code. See the README's Data Model and API
+> Reference, and `backend/app/models/` for the current shape.
+
 ## 1. System Architecture Overview
 The AutoPentest platform follows a decoupled, service-oriented architecture designed to handle long-running background tasks (Strix AI pentesting) asynchronously while maintaining a highly responsive web frontend.
 
