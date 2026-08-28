@@ -3,16 +3,20 @@
 # In-network hostnames. backend/.env points at localhost (correct when running
 # the API straight on the host), which doesn't resolve from inside a container.
 x-service-hosts: &service-hosts
-  DATABASE_URL: postgresql+psycopg://aegis:aegis@db:5432/aegis
-  REDIS_URL: redis://redis:6379/0
+  DATABASE_URL: postgresql+psycopg://aegis:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/aegis
+  REDIS_URL: redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}@redis:6379/0
 
 services:
   db:
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: aegis
-      POSTGRES_PASSWORD: aegis
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
       POSTGRES_DB: aegis
+      # Require a password for host (TCP) connections rather than trusting the
+      # network — a scan sandbox can route to this port (see SECURITY.md).
+      POSTGRES_HOST_AUTH_METHOD: scram-sha-256
+      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256"
     ports:
       - "5432:5432"
     volumes:
@@ -25,8 +29,16 @@ services:
 
   redis:
     image: redis:7-alpine
+    # Broker holds scan payloads and is reachable from the dind network, so it
+    # must not accept unauthenticated commands.
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}"]
     ports:
       - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:?}", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
   api:
     build: ./backend
@@ -153,7 +165,7 @@ services:
   celery-exporter:
     image: danihodovic/celery-exporter:latest
     environment:
-      CE_BROKER_URL: redis://redis:6379/0
+      CE_BROKER_URL: redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}@redis:6379/0
     depends_on:
       - redis
 

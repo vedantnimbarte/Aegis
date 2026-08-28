@@ -130,6 +130,13 @@ This brings up PostgreSQL, Redis, the API, the Celery worker, Celery Beat
 cp backend/.env.example backend/.env
 # edit backend/.env — generate secrets (see Configuration below)
 
+# 1b. Data-tier credentials for docker compose itself. Compose fails fast if
+#     these are unset — there is no default password. The DATABASE_URL and
+#     REDIS_URL in backend/.env must use the same two values.
+cp .env.example .env
+python -c "import secrets;print('POSTGRES_PASSWORD=' + secrets.token_urlsafe(24))" >> .env
+python -c "import secrets;print('REDIS_PASSWORD=' + secrets.token_urlsafe(24))" >> .env
+
 # 2. Build and start the stack
 docker compose up --build
 
