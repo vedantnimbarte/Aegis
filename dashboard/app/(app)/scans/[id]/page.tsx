@@ -5,11 +5,14 @@ import {
   ArrowLeft,
   Check,
   ChevronDown,
+  ChevronsDownUp,
+  ChevronsUpDown,
   Circle,
   Download,
   ExternalLink,
   Github,
   GitPullRequest,
+  Link2,
   Radar,
   ShieldCheck,
   XCircle,
@@ -20,16 +23,19 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { CodeBlock, Markdown } from "@/components/Markdown";
+import { useToast } from "@/components/Toast";
 import {
   Button,
   Card,
   cn,
   ErrorState,
   Pill,
+  SeverityBar,
   SeverityBadge,
+  Skeleton,
   Spinner,
   StatusBadge,
 } from "@/components/ui";
@@ -53,6 +59,7 @@ import type {
 export default function ScanDetailPage() {
   const { id } = useParams<{ id: string }>();
   const queryClient = useQueryClient();
+  const toast = useToast();
 
   const scanQuery = useQuery({
     queryKey: ["scan", id],
@@ -80,7 +87,12 @@ export default function ScanDetailPage() {
 
   const cancel = useMutation({
     mutationFn: () => api.cancelScan(id),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["scan", id] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["scan", id] });
+      toast.success("Scan canceled.");
+    },
+    onError: (err) =>
+      toast.fromError(err, "Could not cancel this scan. It may have just finished."),
   });
 
   const download = useMutation({
@@ -94,10 +106,12 @@ export default function ScanDetailPage() {
       a.click();
       a.remove();
       URL.revokeObjectURL(url);
+      toast.success("Report exported.");
     },
+    onError: (err) => toast.fromError(err, "Could not export the PDF. Please try again."),
   });
 
-  if (scanQuery.isLoading) return <Spinner label="Loading scan…" />;
+  if (scanQuery.isLoading) return <ScanDetailSkeleton />;
   if (scanQuery.error || !scan) return <ErrorState message="Scan not found." />;
 
   return (
@@ -154,23 +168,11 @@ export default function ScanDetailPage() {
         </div>
       </div>
 
-      {download.error ? (
-        <div className="mb-6">
-          <ErrorState message="Could not export the PDF. Please try again." />
-        </div>
-      ) : null}
-
       {scan.custom_instructions ? (
         <Card className="mb-6 px-4 py-3">
           <p className="font-mono text-[10px] uppercase tracking-wide text-faint">Instructions</p>
           <p className="mt-1 text-[13px] leading-relaxed text-muted">{scan.custom_instructions}</p>
         </Card>
-      ) : null}
-
-      {cancel.error ? (
-        <div className="mb-6">
-          <ErrorState message="Could not cancel this scan. It may have just finished." />
-        </div>
       ) : null}
 
       {/* Run cost — only known once the worker has ingested the run. */}
@@ -186,7 +188,8 @@ export default function ScanDetailPage() {
           ) : null}
           {scan.llm_requests != null ? (
             <span className="text-[13px] text-muted">
-              Model calls <span className="font-mono text-fg">{scan.llm_requests}</span>
+              Model calls{" "}
+              <span className="font-mono text-fg">{scan.llm_requests.toLocaleString()}</span>
             </span>
           ) : null}
           {scan.input_tokens != null ? (
@@ -215,6 +218,34 @@ export default function ScanDetailPage() {
       ) : (
         <Report report={reportQuery.data} />
       )}
+    </>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+function ScanDetailSkeleton() {
+  return (
+    <>
+      <Skeleton className="mb-6 h-3 w-24" />
+      <div className="mb-8 flex items-start gap-3">
+        <Skeleton className="h-11 w-11 shrink-0 rounded-xl" />
+        <div className="flex-1 space-y-2.5">
+          <Skeleton className="h-5 w-56" />
+          <Skeleton className="h-3 w-72" />
+        </div>
+      </div>
+      <Card className="mb-6 space-y-3 p-5">
+        <Skeleton className="h-3 w-32" />
+        <Skeleton className="h-8 w-48" />
+      </Card>
+      <div className="space-y-3">
+        {Array.from({ length: 4 }, (_, i) => (
+          <Card key={i} className="flex items-center gap-3 px-4 py-4">
+            <Skeleton className="h-5 w-20 shrink-0 rounded-md" />
+            <Skeleton className="h-3.5 flex-1" />
+          </Card>
+        ))}
+      </div>
     </>
   );
 }
@@ -275,7 +306,9 @@ function InProgress({ scan }: { scan: Scan }) {
                 <p className="font-mono text-[10px] uppercase tracking-wide text-faint">
                   Model calls
                 </p>
-                <p className="font-mono text-[13px] text-fg">{progress.llm_requests}</p>
+                <p className="font-mono text-[13px] text-fg">
+                  {progress.llm_requests.toLocaleString()}
+                </p>
               </div>
               {progress.cost_usd !== null ? (
                 <div className="text-right">
@@ -398,6 +431,50 @@ function Report({ report }: { report: ScanReport }) {
   const score = riskScore(report.counts_by_severity);
   const band = riskBand(score);
 
+  // Filter state. An empty severity set means "no severity filter" rather than
+  // "hide everything" — a filter nobody has touched shouldn't blank the page.
+  const [severities, setSeverities] = useState<Set<Severity>>(new Set());
+  const [showTriaged, setShowTriaged] = useState(false);
+  // Bumping the nonce remounts the cards, which is how expand/collapse-all
+  // resets every <details> without making each one a controlled component.
+  const [expand, setExpand] = useState<{ open: boolean; nonce: number }>({
+    open: false,
+    nonce: 0,
+  });
+
+  // A shared #finding-<id> link should land on that finding, open.
+  const [linkedId, setLinkedId] = useState<string | null>(null);
+  useEffect(() => {
+    const hash = window.location.hash.replace(/^#finding-/, "");
+    if (!hash || hash === window.location.hash) return;
+    setLinkedId(hash);
+    document.getElementById(`finding-${hash}`)?.scrollIntoView({ block: "center" });
+  }, []);
+
+  const sorted = useMemo(
+    () =>
+      SEVERITY_ORDER.flatMap((sev) =>
+        report.vulnerabilities.filter((v) => v.severity === sev)
+      ),
+    [report.vulnerabilities]
+  );
+
+  const visible = sorted.filter((v) => {
+    if (severities.size > 0 && !severities.has(v.severity)) return false;
+    // The linked finding always shows, so a shared link can't land on a
+    // finding the default filter has hidden.
+    if (v.id === linkedId) return true;
+    if (!showTriaged && v.triage_status !== "open") return false;
+    return true;
+  });
+
+  const toggleSeverity = (sev: Severity) =>
+    setSeverities((current) => {
+      const next = new Set(current);
+      if (!next.delete(sev)) next.add(sev);
+      return next;
+    });
+
   if (report.total === 0) {
     return (
       <Card className="flex flex-col items-center justify-center px-6 py-16 text-center">
@@ -415,26 +492,41 @@ function Report({ report }: { report: ScanReport }) {
   return (
     <>
       {/* Summary */}
-      <Card className="mb-6 flex flex-col gap-5 p-5 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex flex-wrap gap-2">
-          {SEVERITY_ORDER.map((sev) => {
-            const count = report.counts_by_severity[sev] ?? 0;
-            if (count === 0) return null;
-            return (
-              <div key={sev} className="flex items-center gap-2 rounded-lg border border-line bg-ink px-3 py-2">
-                <SeverityBadge severity={sev} />
-                <span className="font-display text-sm font-bold text-fg">{count}</span>
-              </div>
-            );
-          })}
+      <Card className="mb-6 p-5">
+        <div className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-wrap gap-2">
+            {SEVERITY_ORDER.map((sev) => {
+              const count = report.counts_by_severity[sev] ?? 0;
+              if (count === 0) return null;
+              const on = severities.has(sev);
+              return (
+                <button
+                  key={sev}
+                  type="button"
+                  aria-pressed={on}
+                  onClick={() => toggleSeverity(sev)}
+                  className={cn(
+                    "flex items-center gap-2 rounded-lg border px-3 py-2 transition-colors",
+                    on ? "border-cyan/50 bg-cyan/[0.07]" : "border-line bg-ink hover:border-line"
+                  )}
+                >
+                  <SeverityBadge severity={sev} />
+                  <span className="font-display text-sm font-bold text-fg">{count}</span>
+                </button>
+              );
+            })}
+          </div>
+          <div className="flex items-center gap-3 sm:flex-col sm:items-end">
+            <span className="font-mono text-[10px] uppercase tracking-wide text-faint">
+              Risk score
+            </span>
+            <span className="font-display text-3xl font-bold" style={{ color: band.color }}>
+              {score}
+              <span className="ml-1 text-sm font-medium text-muted">/ 100</span>
+            </span>
+          </div>
         </div>
-        <div className="flex items-center gap-3 sm:flex-col sm:items-end">
-          <span className="font-mono text-[10px] uppercase tracking-wide text-faint">Risk score</span>
-          <span className="font-display text-3xl font-bold" style={{ color: band.color }}>
-            {score}
-            <span className="ml-1 text-sm font-medium text-muted">/ 100</span>
-          </span>
-        </div>
+        <SeverityBar counts={report.counts_by_severity} className="mt-5" />
       </Card>
 
       {report.diff.has_baseline ? (
@@ -456,24 +548,88 @@ function Report({ report }: { report: ScanReport }) {
             </span>{" "}
             <span className="text-muted">still open</span>
           </span>
-          {report.suppressed_count > 0 ? (
-            <span className="text-[13px] text-muted">
-              · {report.suppressed_count} triaged away
-            </span>
-          ) : null}
         </Card>
       ) : null}
 
       <AutofixCard report={report} />
 
-      {/* Findings grouped by severity */}
-      <div className="space-y-3">
-        {SEVERITY_ORDER.flatMap((sev) =>
-          report.vulnerabilities.filter((v) => v.severity === sev)
-        ).map((vuln) => (
-          <VulnerabilityCard key={vuln.id} vuln={vuln} scanId={report.scan.id} />
-        ))}
+      {/* Findings toolbar — sticks below the mobile top bar while scrolling a
+          long report, so the filters stay reachable. */}
+      <div className="sticky top-14 z-10 -mx-1 mb-3 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-line bg-ink/95 px-4 py-2.5 backdrop-blur lg:top-0">
+        <span className="font-mono text-[11px] text-muted">
+          {visible.length === sorted.length
+            ? `${sorted.length} findings`
+            : `${visible.length} of ${sorted.length} findings`}
+        </span>
+
+        {severities.size > 0 ? (
+          <button
+            type="button"
+            onClick={() => setSeverities(new Set())}
+            className="font-mono text-[11px] text-cyan-soft hover:text-cyan"
+          >
+            Clear severity filter
+          </button>
+        ) : null}
+
+        <div className="ml-auto flex items-center gap-2">
+          {report.suppressed_count > 0 ? (
+            <button
+              type="button"
+              aria-pressed={showTriaged}
+              onClick={() => setShowTriaged((v) => !v)}
+              className={cn(
+                "rounded-md border px-2.5 py-1 font-mono text-[11px] transition-colors",
+                showTriaged
+                  ? "border-cyan/40 bg-cyan/10 text-cyan-soft"
+                  : "border-line bg-ink text-faint hover:text-muted"
+              )}
+            >
+              {showTriaged ? "Hide" : "Show"} {report.suppressed_count} triaged
+            </button>
+          ) : null}
+          <button
+            type="button"
+            onClick={() => setExpand((e) => ({ open: !e.open, nonce: e.nonce + 1 }))}
+            className="inline-flex items-center gap-1.5 rounded-md border border-line bg-ink px-2.5 py-1 font-mono text-[11px] text-faint transition-colors hover:text-muted"
+          >
+            {expand.open ? (
+              <ChevronsDownUp className="h-3 w-3" strokeWidth={2} />
+            ) : (
+              <ChevronsUpDown className="h-3 w-3" strokeWidth={2} />
+            )}
+            {expand.open ? "Collapse all" : "Expand all"}
+          </button>
+        </div>
       </div>
+
+      {/* Findings */}
+      {visible.length === 0 ? (
+        <Card className="px-5 py-10 text-center">
+          <p className="text-[13px] text-muted">No findings match the current filters.</p>
+          <button
+            type="button"
+            onClick={() => {
+              setSeverities(new Set());
+              setShowTriaged(true);
+            }}
+            className="mt-2 font-mono text-[12px] text-cyan-soft hover:text-cyan"
+          >
+            Show everything
+          </button>
+        </Card>
+      ) : (
+        <div className="space-y-3">
+          {visible.map((vuln) => (
+            <VulnerabilityCard
+              key={`${vuln.id}-${expand.nonce}`}
+              vuln={vuln}
+              scanId={report.scan.id}
+              defaultOpen={expand.open || vuln.id === linkedId}
+            />
+          ))}
+        </div>
+      )}
     </>
   );
 }
@@ -481,6 +637,7 @@ function Report({ report }: { report: ScanReport }) {
 /* -------------------------------------------------------------------------- */
 function AutofixCard({ report }: { report: ScanReport }) {
   const queryClient = useQueryClient();
+  const toast = useToast();
   const scan = report.scan;
 
   const autofix = useMutation({
@@ -488,6 +645,7 @@ function AutofixCard({ report }: { report: ScanReport }) {
     onSuccess: ({ pull_request_url }) => {
       queryClient.invalidateQueries({ queryKey: ["scan", scan.id] });
       queryClient.invalidateQueries({ queryKey: ["report", scan.id] });
+      toast.success("Fix pull request opened.");
       window.open(pull_request_url, "_blank", "noopener");
     },
   });
@@ -541,6 +699,8 @@ function AutofixCard({ report }: { report: ScanReport }) {
         </Button>
       </div>
 
+      {/* Kept inline rather than as a toast: both branches need a follow-up
+          link, and the error explains the disabled action sitting next to it. */}
       {err ? (
         <div className="mt-3 space-y-2">
           <ErrorState message={err.message} />
@@ -574,13 +734,32 @@ const TRIAGE_TONE: Record<TriageStatus, string> = {
   fixed: "border-signal/30 bg-signal/10 text-signal",
 };
 
-function VulnerabilityCard({ vuln, scanId }: { vuln: Vulnerability; scanId: string }) {
+function VulnerabilityCard({
+  vuln,
+  scanId,
+  defaultOpen,
+}: {
+  vuln: Vulnerability;
+  scanId: string;
+  defaultOpen?: boolean;
+}) {
   const queryClient = useQueryClient();
+  const toast = useToast();
+  // Controlled rather than leaning on React's diffing of the `open` attribute,
+  // so a re-render (a triage save, a refetch) can never snap the card shut
+  // under the reader. Expand/collapse-all remounts via `key`, re-seeding this.
+  const [open, setOpen] = useState(defaultOpen ?? false);
   const triage = useMutation({
-    mutationFn: (status: TriageStatus) =>
-      api.triageFinding(scanId, vuln.id, { status }),
-    // Refetch the report so the diff/suppressed counts stay in step.
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["report", scanId] }),
+    mutationFn: (status: TriageStatus) => api.triageFinding(scanId, vuln.id, { status }),
+    onSuccess: (_data, status) => {
+      // Refetch the report so the diff/suppressed counts stay in step.
+      queryClient.invalidateQueries({ queryKey: ["report", scanId] });
+      queryClient.invalidateQueries({ queryKey: ["scans"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard", "summary"] });
+      const label = TRIAGE_CHOICES.find((c) => c.value === status)?.label ?? status;
+      toast.success(`Marked as ${label.toLowerCase()}.`);
+    },
+    onError: (err) => toast.fromError(err, "Could not save that verdict."),
   });
 
   const status = vuln.triage_status;
@@ -591,8 +770,12 @@ function VulnerabilityCard({ vuln, scanId }: { vuln: Vulnerability; scanId: stri
   if (vuln.file_path) meta.push({ k: "Location", v: vuln.file_path });
 
   return (
-    <Card className="overflow-hidden">
-      <details className="group">
+    <Card id={`finding-${vuln.id}`} className="overflow-hidden scroll-mt-24">
+      <details
+        className="group"
+        open={open}
+        onToggle={(e) => setOpen(e.currentTarget.open)}
+      >
         <summary className="flex cursor-pointer list-none items-center gap-3 px-4 py-3.5 transition-colors hover:bg-surface/60 [&::-webkit-details-marker]:hidden">
           <SeverityBadge severity={vuln.severity} />
           <span
@@ -658,7 +841,12 @@ function VulnerabilityCard({ vuln, scanId }: { vuln: Vulnerability; scanId: stri
           <Section title="Description">
             <Markdown
               text={vuln.description}
-              actions={<IssueAction vuln={vuln} scanId={scanId} />}
+              actions={
+                <>
+                  <IssueAction vuln={vuln} scanId={scanId} />
+                  <CopyLinkAction findingId={vuln.id} />
+                </>
+              }
             />
           </Section>
 
@@ -706,9 +894,6 @@ function VulnerabilityCard({ vuln, scanId }: { vuln: Vulnerability; scanId: stri
                 This finding predates fingerprinting and cannot be triaged.
               </p>
             ) : null}
-            {triage.error ? (
-              <p className="mt-2 text-[12px] text-danger">Could not save that verdict.</p>
-            ) : null}
           </div>
         </div>
       </details>
@@ -716,9 +901,36 @@ function VulnerabilityCard({ vuln, scanId }: { vuln: Vulnerability; scanId: stri
   );
 }
 
+const CHIP =
+  "inline-flex items-center gap-1.5 rounded-md border border-line bg-ink transition-colors hover:border-cyan/40 hover:text-fg";
+const CHIP_SIZE = "px-2 py-1.5 font-mono text-[11px]";
+const CHIP_SIZE_COMPACT = "p-1.5";
+
+/** Copies a deep link to this finding, so one result can be handed to a
+ *  teammate without telling them to scroll. */
+function CopyLinkAction({ findingId }: { findingId: string }) {
+  const toast = useToast();
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        const url = `${window.location.origin}${window.location.pathname}#finding-${findingId}`;
+        navigator.clipboard
+          .writeText(url)
+          .then(() => toast.success("Link to this finding copied."))
+          .catch(() => toast.error("Could not copy the link."));
+      }}
+      className={cn(CHIP, CHIP_SIZE, "text-faint")}
+    >
+      <Link2 className="h-3.5 w-3.5" strokeWidth={2} />
+      Copy link
+    </button>
+  );
+}
+
 /** Opens — or links to — the GitHub issue tracking this finding.
     `compact` is the icon-only form shown in the collapsed summary row, where
-    there is no space for a label or an error line. */
+    there is no space for a label. */
 function IssueAction({
   vuln,
   scanId,
@@ -729,21 +941,18 @@ function IssueAction({
   compact?: boolean;
 }) {
   const queryClient = useQueryClient();
+  const toast = useToast();
+  const size = compact ? CHIP_SIZE_COMPACT : CHIP_SIZE;
   // The issue URL is stored against the fingerprint, so the refetch turns the
   // button into a link and a second click can't open a duplicate.
   const issue = useMutation({
     mutationFn: () => api.createFindingIssue(scanId, vuln.id),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["report", scanId] }),
+    onSuccess: ({ created }) => {
+      queryClient.invalidateQueries({ queryKey: ["report", scanId] });
+      toast.success(created ? "GitHub issue opened." : "This finding already has an issue.");
+    },
+    onError: (err) => toast.fromError(err, "Could not create the issue."),
   });
-
-  const chip =
-    "inline-flex items-center gap-1.5 rounded-md border border-line bg-ink transition-colors hover:border-cyan/40 hover:text-fg";
-  const size = compact ? "p-1.5" : "px-2 py-1.5 font-mono text-[11px]";
-  const failed = issue.error
-    ? issue.error instanceof ApiError
-      ? issue.error.message
-      : "Could not create the issue."
-    : null;
 
   if (vuln.github_issue_url) {
     return (
@@ -754,7 +963,7 @@ function IssueAction({
         title="View the GitHub issue for this finding"
         // Inside <summary>, a click that reaches the parent toggles the card.
         onClick={(e) => e.stopPropagation()}
-        className={cn(chip, size, "text-muted")}
+        className={cn(CHIP, size, "text-muted")}
       >
         <Github className="h-3.5 w-3.5" strokeWidth={2} />
         {compact ? null : (
@@ -768,36 +977,28 @@ function IssueAction({
   }
 
   return (
-    <>
-      <button
-        type="button"
-        disabled={issue.isPending || !vuln.fingerprint}
-        title={failed ?? "Create a GitHub issue for this finding"}
-        onClick={(e) => {
-          e.stopPropagation();
-          e.preventDefault();
-          issue.mutate();
-        }}
-        className={cn(
-          chip,
-          size,
-          failed ? "border-danger/40 text-danger" : "text-faint",
-          "disabled:opacity-50"
-        )}
-      >
-        {issue.isPending ? (
-          <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={2} />
-        ) : (
-          <Github className="h-3.5 w-3.5" strokeWidth={2} />
-        )}
-        {compact ? null : "Create GitHub issue"}
-      </button>
-      {failed && !compact ? (
-        // `order-last` + `w-full` drop the reason onto its own line below
-        // the whole toolbar, rather than wrapping the icons past it.
-        <p className="order-last w-full text-[12px] text-danger">{failed}</p>
-      ) : null}
-    </>
+    <button
+      type="button"
+      disabled={issue.isPending || !vuln.fingerprint}
+      title={
+        vuln.fingerprint
+          ? "Create a GitHub issue for this finding"
+          : "This finding cannot be tracked — it has no fingerprint"
+      }
+      onClick={(e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        issue.mutate();
+      }}
+      className={cn(CHIP, size, "text-faint disabled:opacity-50")}
+    >
+      {issue.isPending ? (
+        <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={2} />
+      ) : (
+        <Github className="h-3.5 w-3.5" strokeWidth={2} />
+      )}
+      {compact ? null : "Create GitHub issue"}
+    </button>
   );
 }
 

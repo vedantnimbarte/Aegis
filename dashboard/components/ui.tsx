@@ -2,8 +2,14 @@
 import { Loader2, type LucideIcon } from "lucide-react";
 import type { ButtonHTMLAttributes, ReactNode } from "react";
 
-import { SEVERITY_META, STATUS_META } from "@/lib/format";
+import { SEVERITY_META, SEVERITY_ORDER, STATUS_META } from "@/lib/format";
 import type { ScanStatus, Severity } from "@/lib/types";
+
+type SeverityCounts = Partial<Record<Severity, number>>;
+
+function totalOf(counts: SeverityCounts): number {
+  return SEVERITY_ORDER.reduce((n, sev) => n + (counts[sev] ?? 0), 0);
+}
 
 /* -------------------------------------------------------------------------- */
 export function cn(...parts: Array<string | false | null | undefined>): string {
@@ -58,12 +64,15 @@ export function Button({
 export function Card({
   children,
   className,
+  id,
 }: {
   children: ReactNode;
   className?: string;
+  /** Anchor target, e.g. so a finding can be deep-linked. */
+  id?: string;
 }) {
   return (
-    <div className={cn("rounded-xl border border-line bg-surface/40", className)}>
+    <div id={id} className={cn("rounded-xl border border-line bg-surface/40", className)}>
       {children}
     </div>
   );
@@ -106,6 +115,122 @@ export function StatusBadge({ status }: { status: ScanStatus }) {
       />
       {meta.label}
     </Pill>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/** A scan's findings as one stacked proportion bar — segment widths are counts,
+ *  colors are severities. Reads in a glance and makes two scans comparable in a
+ *  way a row of separate chips does not. */
+export function SeverityBar({
+  counts,
+  className,
+}: {
+  counts: SeverityCounts;
+  className?: string;
+}) {
+  const total = totalOf(counts);
+  const label = total
+    ? SEVERITY_ORDER.filter((sev) => counts[sev])
+        .map((sev) => `${counts[sev]} ${SEVERITY_META[sev].label}`)
+        .join(", ")
+    : "No open findings";
+
+  return (
+    <div
+      role="img"
+      aria-label={label}
+      title={label}
+      className={cn("flex h-1.5 w-full overflow-hidden rounded-full bg-line", className)}
+    >
+      {SEVERITY_ORDER.map((sev) => {
+        const n = counts[sev] ?? 0;
+        if (!n) return null;
+        return (
+          <span
+            key={sev}
+            style={{ width: `${(n / total) * 100}%`, backgroundColor: SEVERITY_META[sev].dot }}
+          />
+        );
+      })}
+    </div>
+  );
+}
+
+/** Per-severity tallies. Severity is carried by a label for screen readers, not
+ *  by color alone. */
+export function SeverityCountList({
+  counts,
+  emptyLabel = "No findings",
+  className,
+}: {
+  counts: SeverityCounts;
+  emptyLabel?: string;
+  className?: string;
+}) {
+  const shown = SEVERITY_ORDER.filter((sev) => (counts[sev] ?? 0) > 0);
+
+  if (shown.length === 0) {
+    return (
+      <span className={cn("font-mono text-[11px] text-signal", className)}>{emptyLabel}</span>
+    );
+  }
+
+  return (
+    <span className={cn("flex items-center gap-2.5 font-mono text-[11px]", className)}>
+      {shown.map((sev) => (
+        <span key={sev} className="flex items-center gap-1">
+          <span
+            aria-hidden
+            className="h-1.5 w-1.5 shrink-0 rounded-full"
+            style={{ backgroundColor: SEVERITY_META[sev].dot }}
+          />
+          <span style={{ color: SEVERITY_META[sev].dot }}>{counts[sev]}</span>
+          <span className="sr-only">{SEVERITY_META[sev].label}</span>
+        </span>
+      ))}
+    </span>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/** Placeholder block for content that is still loading. Pages render their
+ *  header and layout immediately and fill these in, rather than swapping the
+ *  whole screen for a spinner and snapping back. */
+export function Skeleton({ className }: { className?: string }) {
+  return <div className={cn("animate-pulse rounded bg-line/70", className)} />;
+}
+
+export function SkeletonList({ rows = 5 }: { rows?: number }) {
+  return (
+    <Card>
+      <ul className="divide-y divide-line">
+        {Array.from({ length: rows }, (_, i) => (
+          <li key={i} className="flex items-center gap-4 px-4 py-4">
+            <Skeleton className="h-8 w-8 shrink-0 rounded-lg" />
+            <div className="min-w-0 flex-1 space-y-2">
+              <Skeleton className="h-3 w-2/5" />
+              <Skeleton className="h-2.5 w-1/4" />
+            </div>
+            <Skeleton className="h-5 w-20 shrink-0 rounded-md" />
+          </li>
+        ))}
+      </ul>
+    </Card>
+  );
+}
+
+export function SkeletonCards({ count = 4 }: { count?: number }) {
+  return (
+    <div className="grid grid-cols-2 gap-3.5 lg:grid-cols-4">
+      {Array.from({ length: count }, (_, i) => (
+        <Card key={i} className="space-y-3 p-4">
+          <Skeleton className="h-2.5 w-2/3" />
+          <Skeleton className="h-8 w-1/3" />
+          <Skeleton className="h-2.5 w-1/2" />
+        </Card>
+      ))}
+    </div>
   );
 }
 

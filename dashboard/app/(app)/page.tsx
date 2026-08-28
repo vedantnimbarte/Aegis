@@ -1,6 +1,6 @@
 "use client";
 
-import { useQueries, useQuery } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { GitBranch, Radar, ShieldAlert, Activity, Gauge } from "lucide-react";
 import Link from "next/link";
 import { useMemo } from "react";
@@ -11,61 +11,31 @@ import {
   EmptyState,
   ErrorState,
   PageHeader,
-  Spinner,
+  SeverityBar,
+  SeverityCountList,
+  SkeletonCards,
+  SkeletonList,
   StatusBadge,
 } from "@/components/ui";
 import { api } from "@/lib/api";
-import { relativeTime, riskBand, riskScore, SEVERITY_ORDER } from "@/lib/format";
-import type { Scan, Severity } from "@/lib/types";
-
-// Bound how many completed reports we pull to aggregate portfolio metrics.
-const MAX_REPORTS = 20;
+import { relativeTime, riskBand, riskScore } from "@/lib/format";
+import type { DashboardSummary, Scan } from "@/lib/types";
 
 export default function OverviewPage() {
+  // One aggregate, computed server-side from the latest completed scan of each
+  // repository. Summing every scan's report client-side used to count a
+  // vulnerability once per re-scan, so a repo scanned ten times reported its
+  // findings ten times over.
+  const summaryQuery = useQuery({
+    queryKey: ["dashboard", "summary"],
+    queryFn: api.dashboardSummary,
+  });
   const scansQuery = useQuery({ queryKey: ["scans"], queryFn: () => api.listScans() });
   const reposQuery = useQuery({ queryKey: ["repos"], queryFn: api.listRepos });
 
   const scans = scansQuery.data ?? [];
   const repos = reposQuery.data ?? [];
-  const repoName = useMemo(
-    () => new Map(repos.map((r) => [r.id, r.name])),
-    [repos]
-  );
-
-  const completedIds = useMemo(
-    () => scans.filter((s) => s.status === "completed").slice(0, MAX_REPORTS).map((s) => s.id),
-    [scans]
-  );
-
-  const reportQueries = useQueries({
-    queries: completedIds.map((id) => ({
-      queryKey: ["report", id],
-      queryFn: () => api.getReport(id),
-      staleTime: 60 * 1000,
-    })),
-  });
-
-  const metrics = useMemo(() => {
-    const totals: Record<Severity, number> = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
-    const scores: number[] = [];
-    for (const q of reportQueries) {
-      if (!q.data) continue;
-      for (const sev of SEVERITY_ORDER) totals[sev] += q.data.counts_by_severity[sev] ?? 0;
-      scores.push(riskScore(q.data.counts_by_severity));
-    }
-    const activeVulns = SEVERITY_ORDER.reduce((n, s) => n + totals[s], 0);
-    const avgRisk = scores.length
-      ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length)
-      : 0;
-    return { totals, activeVulns, avgRisk };
-  }, [reportQueries]);
-
-  if (scansQuery.isLoading) return <Spinner label="Loading your dashboard…" />;
-  if (scansQuery.error)
-    return <ErrorState message="Could not load your scans. Is the backend reachable?" />;
-
-  const band = riskBand(metrics.avgRisk);
-  const running = scans.filter((s) => s.status === "running" || s.status === "pending").length;
+  const repoName = useMemo(() => new Map(repos.map((r) => [r.id, r.name])), [repos]);
 
   return (
     <>
@@ -75,25 +45,13 @@ export default function OverviewPage() {
         action={<NewScanAction repositories={repos} />}
       />
 
-      {/* Metric cards */}
-      <div className="grid grid-cols-2 gap-3.5 lg:grid-cols-4">
-        <Stat icon={Radar} label="Total scans" value={scans.length} hint={`${running} in progress`} />
-        <Stat
-          icon={ShieldAlert}
-          label="Active vulnerabilities"
-          value={metrics.activeVulns}
-          hint={`${metrics.totals.critical} critical · ${metrics.totals.high} high`}
-          accent={metrics.totals.critical > 0 ? "#FB5C6B" : undefined}
-        />
-        <Stat
-          icon={Gauge}
-          label="Avg risk score"
-          value={metrics.avgRisk}
-          hint={band.label}
-          accent={band.color}
-        />
-        <Stat icon={GitBranch} label="Repositories" value={repos.length} hint="connected" />
-      </div>
+      {summaryQuery.isLoading ? (
+        <SkeletonCards />
+      ) : summaryQuery.error || !summaryQuery.data ? (
+        <ErrorState message="Could not load your security posture. Is the backend reachable?" />
+      ) : (
+        <Metrics summary={summaryQuery.data} />
+      )}
 
       {/* Recent scans */}
       <section className="mt-10">
@@ -106,7 +64,11 @@ export default function OverviewPage() {
           ) : null}
         </div>
 
-        {scans.length === 0 ? (
+        {scansQuery.isLoading ? (
+          <SkeletonList rows={4} />
+        ) : scansQuery.error ? (
+          <ErrorState message="Could not load your scans." />
+        ) : scans.length === 0 ? (
           <EmptyState
             icon={Activity}
             title="No scans yet"
@@ -120,12 +82,86 @@ export default function OverviewPage() {
           <Card>
             <ul className="divide-y divide-line">
               {scans.slice(0, 6).map((scan) => (
-                <RecentScanRow key={scan.id} scan={scan} repoName={repoName.get(scan.repository_id)} />
+                <RecentScanRow
+                  key={scan.id}
+                  scan={scan}
+                  repoName={repoName.get(scan.repository_id)}
+                />
               ))}
             </ul>
           </Card>
         )}
       </section>
+    </>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+function Metrics({ summary }: { summary: DashboardSummary }) {
+  const score = riskScore(summary.counts_by_severity);
+  const band = riskBand(score);
+  const { critical = 0, high = 0 } = summary.counts_by_severity ?? {};
+
+  return (
+    <>
+      <div className="grid grid-cols-2 gap-3.5 lg:grid-cols-4">
+        <Stat
+          icon={ShieldAlert}
+          label="Open findings"
+          value={summary.open_findings}
+          hint={`${critical} critical · ${high} high`}
+          accent={critical > 0 ? "#FB5C6B" : undefined}
+          href="/scans"
+        />
+        <Stat
+          icon={Gauge}
+          label="Risk score"
+          value={score}
+          hint={band.label}
+          accent={band.color}
+        />
+        <Stat
+          icon={Radar}
+          label="Total scans"
+          value={summary.total_scans}
+          hint={
+            summary.running_scans > 0
+              ? `${summary.running_scans} in progress`
+              : summary.last_scan_at
+                ? `last ${relativeTime(summary.last_scan_at)}`
+                : "none yet"
+          }
+          href="/scans"
+        />
+        <Stat
+          icon={GitBranch}
+          label="Repositories"
+          value={summary.connected_repos}
+          hint={`${summary.scanned_repos} scanned`}
+          href="/repos"
+        />
+      </div>
+
+      {/* The composition behind "open findings" — and a plain statement of what
+          is being counted, since the number is not a sum over scan history. */}
+      {summary.scanned_repos > 0 ? (
+        <Card className="mt-3.5 space-y-2.5 px-5 py-4">
+          <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1.5">
+            <SeverityCountList
+              counts={summary.counts_by_severity}
+              emptyLabel="No open findings"
+            />
+            <p className="text-[11px] text-faint">
+              Latest scan of {summary.scanned_repos}{" "}
+              {summary.scanned_repos === 1 ? "repository" : "repositories"}
+              {summary.suppressed_findings > 0
+                ? ` · ${summary.suppressed_findings} triaged away`
+                : ""}
+            </p>
+          </div>
+          <SeverityBar counts={summary.counts_by_severity} />
+        </Card>
+      ) : null}
     </>
   );
 }
@@ -136,25 +172,43 @@ function Stat({
   value,
   hint,
   accent,
+  href,
 }: {
   icon: typeof Radar;
   label: string;
   value: number;
   hint?: string;
   accent?: string;
+  href?: string;
 }) {
-  return (
-    <Card className="p-4">
+  const body = (
+    <>
       <div className="mb-3 flex items-center justify-between">
-        <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-faint">{label}</span>
+        <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-faint">
+          {label}
+        </span>
         <Icon className="h-4 w-4 text-faint" strokeWidth={1.75} />
       </div>
-      <p className="font-display text-3xl font-bold text-fg" style={accent ? { color: accent } : undefined}>
-        {value}
+      <p
+        className="font-display text-3xl font-bold text-fg"
+        style={accent ? { color: accent } : undefined}
+      >
+        {value.toLocaleString()}
       </p>
       {hint ? <p className="mt-1 text-[11px] text-muted">{hint}</p> : null}
-    </Card>
+    </>
   );
+
+  if (href) {
+    return (
+      <Card className="transition-colors hover:border-cyan/30">
+        <Link href={href} className="block p-4">
+          {body}
+        </Link>
+      </Card>
+    );
+  }
+  return <Card className="p-4">{body}</Card>;
 }
 
 function RecentScanRow({ scan, repoName }: { scan: Scan; repoName?: string }) {
@@ -173,6 +227,13 @@ function RecentScanRow({ scan, repoName }: { scan: Scan; repoName?: string }) {
             {scan.scan_mode} scan · {relativeTime(scan.created_at)}
           </p>
         </div>
+        {scan.counts_by_severity ? (
+          <SeverityCountList
+            counts={scan.counts_by_severity}
+            emptyLabel="Clean"
+            className="hidden sm:flex"
+          />
+        ) : null}
         <StatusBadge status={scan.status} />
       </Link>
     </li>

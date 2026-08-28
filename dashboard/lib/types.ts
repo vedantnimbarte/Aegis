@@ -92,6 +92,22 @@ export interface Scan {
   llm_requests: number | null;
   input_tokens: number | null;
   output_tokens: number | null;
+  /** Open findings by severity. Null until the scan completes. */
+  counts_by_severity: Record<Severity, number> | null;
+  /** Every finding, including ones triaged away. Null until the scan completes. */
+  findings_total: number | null;
+}
+
+/** Current posture across all repositories — the latest completed scan of each. */
+export interface DashboardSummary {
+  total_scans: number;
+  running_scans: number;
+  connected_repos: number;
+  scanned_repos: number;
+  counts_by_severity: Record<Severity, number>;
+  open_findings: number;
+  suppressed_findings: number;
+  last_scan_at: string | null;
 }
 
 export interface ProgressStep {

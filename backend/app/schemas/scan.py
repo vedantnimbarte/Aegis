@@ -43,6 +43,30 @@ class ScanRead(BaseModel):
     input_tokens: int | None = None
     output_tokens: int | None = None
 
+    # Finding summary, so a list row can show the outcome without fetching the
+    # full report. `None` means "not computed" (single-scan reads don't pay for
+    # the aggregate); a completed scan with nothing found returns all zeros.
+    counts_by_severity: dict[str, int] | None = None
+    findings_total: int | None = None
+
+
+class DashboardSummary(BaseModel):
+    """Portfolio-wide current state, aggregated server-side.
+
+    Counts come from the latest completed scan of each repository, so a
+    finding that persists across ten re-scans is counted once — not ten times,
+    which is what summing every scan's report would do.
+    """
+
+    total_scans: int = 0
+    running_scans: int = 0
+    connected_repos: int = 0
+    scanned_repos: int = 0
+    counts_by_severity: dict[str, int] = {}
+    open_findings: int = 0
+    suppressed_findings: int = 0
+    last_scan_at: datetime | None = None
+
 
 class VulnerabilityRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)

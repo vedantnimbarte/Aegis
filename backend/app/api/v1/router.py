@@ -6,6 +6,7 @@ from fastapi import APIRouter
 from app.api.v1.endpoints import (
     auth,
     billing,
+    dashboard,
     github,
     repos,
     scans,
@@ -18,6 +19,7 @@ api_router.include_router(auth.router)
 api_router.include_router(users.router)
 api_router.include_router(repos.router)
 api_router.include_router(scans.router)
+api_router.include_router(dashboard.router)
 api_router.include_router(schedules.router)
 api_router.include_router(github.router)
 api_router.include_router(billing.router)
