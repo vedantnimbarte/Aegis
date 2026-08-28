@@ -1,6 +1,12 @@
+<div align="center">
+
+<img src="assets/logo.png" alt="Aegis" width="120" height="120">
+
 # Aegis
 
 **Continuous, AI-driven penetration testing that acts like a real hacker.**
+
+</div>
 
 Aegis is a SaaS platform powered by the open-source [Strix](https://github.com/usestrix/strix) AI engine. It provides automated, continuous penetration testing for web applications and APIs. Unlike traditional SAST tools that flood developers with false positives, Aegis uses Strix's autonomous AI agents to dynamically execute code, validate vulnerabilities, and deliver real Proof-of-Concept (PoC) exploits with actionable remediation.
 
