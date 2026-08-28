@@ -77,18 +77,24 @@ export function AppShell({ children }: { children: ReactNode }) {
 
         <div className="space-y-2 border-t border-line p-3">
           <OrgSwitcher />
-          <div className="flex items-center gap-3 rounded-lg px-3 py-2">
-            <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full border border-line bg-surface font-mono text-[12px] uppercase text-cyan-soft">
-              {(user?.email ?? "?").charAt(0)}
-            </span>
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-[12px] font-medium text-fg">
-                {user?.github_username ?? user?.email ?? "Signed in"}
-              </p>
-              <p className="truncate font-mono text-[10px] uppercase tracking-wide text-faint">
-                {user?.subscription_tier ?? "free"} plan
-              </p>
-            </div>
+          <div className="flex items-center gap-3 rounded-lg px-1 py-1">
+            <Link
+              href="/account"
+              aria-label="Account settings"
+              className="flex min-w-0 flex-1 items-center gap-3 rounded-lg px-2 py-1.5 transition-colors hover:bg-surface/70"
+            >
+              <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full border border-line bg-surface font-mono text-[12px] uppercase text-cyan-soft">
+                {(user?.display_name ?? user?.email ?? "?").charAt(0)}
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-[12px] font-medium text-fg">
+                  {user?.display_name ?? user?.github_username ?? user?.email ?? "Signed in"}
+                </p>
+                <p className="truncate font-mono text-[10px] uppercase tracking-wide text-faint">
+                  {user?.subscription_tier ?? "free"} plan
+                </p>
+              </div>
+            </Link>
             <button
               onClick={logout}
               aria-label="Sign out"

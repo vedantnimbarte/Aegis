@@ -44,6 +44,8 @@ SHARE_CREATED = "share.created"
 SHARE_REVOKED = "share.revoked"
 SHARE_VIEWED = "share.viewed"
 INTEGRATION_UPDATED = "integration.updated"
+PROFILE_UPDATED = "profile.updated"
+PASSWORD_CHANGED = "profile.password_changed"
 ORG_CREATED = "org.created"
 
 

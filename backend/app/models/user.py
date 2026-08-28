@@ -33,6 +33,9 @@ class User(UUIDMixin, TimestampMixin, Base):
     email_verified: Mapped[bool] = mapped_column(
         default=False, server_default="false", nullable=False
     )
+    # What to call them. Nullable: existing accounts have none, and the UI
+    # falls back to the email local part rather than inventing one.
+    display_name: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
 
     # OAuth token for the GitHub API — encrypted at rest (AES-256-GCM).
     github_token: Mapped[Optional[str]] = mapped_column(
@@ -147,6 +150,15 @@ class User(UUIDMixin, TimestampMixin, Base):
     @property
     def has_accepted_scan_terms(self) -> bool:
         return self.scan_terms_accepted_at is not None
+
+    @property
+    def has_password(self) -> bool:
+        """Whether this account signs in with a password at all.
+
+        A GitHub-only account has none, so the UI can ask for the right thing
+        instead of hedging with an optional field.
+        """
+        return bool(self.hashed_password)
 
     @property
     def has_llm_key(self) -> bool:

@@ -9,6 +9,7 @@ import type {
   BillingSummary,
   CostSummary,
   DashboardSummary,
+  DeletionManifest,
   GitHubAppInfo,
   GitProvider,
   GreyboxConfig,
@@ -80,6 +81,13 @@ export const api = {
   me: () => request<User>("/users/me"),
   acceptScanTerms: () =>
     request<User>("/users/me/accept-scan-terms", { method: "POST" }),
+  updateProfile: (body: { display_name?: string | null; email?: string }) =>
+    request<User>("/users/me", { method: "PATCH", body }),
+  changePassword: (body: { current_password: string; new_password: string }) =>
+    request<User>("/users/me/password", { method: "POST", body }),
+  deletionManifest: () => request<DeletionManifest>("/users/me/deletion-manifest"),
+  deleteAccount: (body: { confirm_email: string; password?: string | null }) =>
+    request<void>("/users/me", { method: "DELETE", body }),
   updateIntegrations: (body: {
     llm_model?: string | null;
     llm_api_key?: string | null;
