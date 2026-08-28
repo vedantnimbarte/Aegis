@@ -1,0 +1,133 @@
+# Alert rules for the Aegis stack.
+#
+# These evaluate in Prometheus and show up under http://localhost:9090/alerts
+# (and in Grafana's Alerting > Alert rules view). Routing them to a human —
+# Slack, PagerDuty, email — needs an Alertmanager with a receiver; see the
+# `alerting:` block in prometheus.yml.
+#
+# Thresholds here are sized for the local/dev stack. Retune them against real
+# traffic before trusting them in production.
+groups:
+  - name: aegis-api
+    rules:
+      - alert: AegisApiDown
+        expr: up{job="aegis-api"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Aegis API is not responding to scrapes"
+          description: "The API has failed /metrics scrapes for 2m. Check `docker compose logs api` — a DB it can't reach fails the container at boot."
+
+      - alert: AegisApiHighErrorRate
+        # No traffic means 0/0 = NaN, which never fires — intentional.
+        expr: sum(rate(http_requests_total{status=~"5.*"}[10m])) / sum(rate(http_requests_total[10m])) > 0.05
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Over 5% of API responses are 5xx"
+          description: "{{ $value | humanizePercentage }} of requests are failing over the last 10m."
+
+      - alert: AegisApiHighLatency
+        expr: histogram_quantile(0.95, sum(rate(http_request_duration_highr_seconds_bucket[10m])) by (le)) > 2
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "API p95 latency above 2s"
+          description: "p95 is {{ $value | humanizeDuration }}. Check the Postgres connection panel before blaming the API."
+
+  - name: aegis-scans
+    rules:
+      - alert: AegisNoCeleryWorkers
+        expr: max(celery_worker_up) == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "No Celery workers are alive"
+          description: "Queued scans will sit in the broker until a worker comes back."
+
+      - alert: AegisScanQueueBacklog
+        expr: sum(celery_queue_length) > 25
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Scan queue is not draining"
+          description: "{{ $value }} tasks have been waiting for 15m. The worker pool is undersized for current scan volume."
+
+      - alert: AegisScanFailureRate
+        expr: |
+          sum(increase(celery_task_failed_total[1h]))
+            / clamp_min(sum(increase(celery_task_failed_total[1h])) + sum(increase(celery_task_succeeded_total[1h])), 1)
+            > 0.2
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Over 20% of scan tasks are failing"
+          description: "{{ $value | humanizePercentage }} of tasks failed in the last hour. Usual suspects: LLM API errors, dind out of disk, unreachable target."
+
+  - name: aegis-datastores
+    rules:
+      - alert: AegisPostgresDown
+        expr: pg_up == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "PostgreSQL is unreachable"
+          description: "The exporter cannot connect to the database. The API fails its boot health check in this state."
+
+      - alert: AegisPostgresConnectionsHigh
+        expr: sum(pg_stat_database_numbackends) / max(pg_settings_max_connections) > 0.8
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "PostgreSQL connections above 80% of max"
+          description: "{{ $value | humanizePercentage }} of max_connections in use. Every API and worker process holds a pool — scale the pool size, not just the workers."
+
+  - name: aegis-resources
+    rules:
+      - alert: AegisContainerMemoryNearLimit
+        # Unlimited containers report a limit of 0 or the machine total; the
+        # >0 guard keeps those out of the ratio. Nothing in docker-compose.yml
+        # sets a limit today, so this stays inert until services get one.
+        expr: |
+          container_memory_working_set_bytes{name!=""}
+            / (container_spec_memory_limit_bytes{name!=""} > 0)
+            > 0.9
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Container {{ $labels.name }} is near its memory limit"
+          description: "Working set is {{ $value | humanizePercentage }} of the limit — the OOM killer is next."
+
+      - alert: AegisDiskFilling
+        # Real block devices only — cAdvisor also reports every overlay and
+        # tmpfs mount, which would alert on things like a full /dev/shm.
+        expr: |
+          container_fs_usage_bytes{id="/", device=~"/dev/(sd|nvme|vd|xvd)[a-z0-9]*"}
+            / container_fs_limit_bytes{id="/", device=~"/dev/(sd|nvme|vd|xvd)[a-z0-9]*"}
+            > 0.85
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Filesystem {{ $labels.device }} is over 85% full"
+          description: "Scan checkouts and Strix run state accumulate on the shared scandata volume. A full disk fails every new scan at sandbox bootstrap."
+
+      - alert: AegisExporterDown
+        # Catch-all for the observability plumbing itself. The API has its own
+        # (critical) rule above, so exclude it here.
+        expr: up{job!="aegis-api"} == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Scrape target {{ $labels.job }} is down"
+          description: "Metrics from this target are stale — alerts that depend on it will not fire."

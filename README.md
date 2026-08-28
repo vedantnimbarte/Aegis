@@ -714,8 +714,15 @@ is environment-specific and lives with your infra, not this repo.
 
 **Observability** — `docker compose up` also starts Prometheus (`:9090`) and
 Grafana (`:3002`, admin/admin by default) with a provisioned datasource and an
-"Aegis Overview" dashboard (API rate/latency, scan task throughput). The API
-exposes metrics at `/metrics`; a `celery-exporter` scrapes scan task events.
+"Aegis Overview" dashboard: service health, API rate/latency/errors, scan
+throughput and duration, per-container CPU/memory/network/disk (filterable by
+container), and PostgreSQL connections/transactions/size. The API exposes
+metrics at `/metrics`; `celery-exporter` scrapes scan task events, `cadvisor`
+container resource usage, and `postgres-exporter` database stats.
+`ops/prometheus/rules.yml` adds alert rules (API down/erroring, no workers,
+queue not draining, scan failure rate, Postgres connections, disk filling);
+they evaluate at `:9090/alerts` — routing them to Slack/PagerDuty needs an
+Alertmanager with your receiver, see the commented block in `prometheus.yml`.
 
 **Operations & security** — see [OPERATIONS.md](OPERATIONS.md) for DB backup /
 restore and the migration-rollback runbook, and [SECURITY.md](SECURITY.md) for
