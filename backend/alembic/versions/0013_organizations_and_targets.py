@@ -43,6 +43,50 @@ def _uuid_pk() -> sa.Column:
     )
 
 
+def _rename_constraint(table: str, old: str, new: str) -> None:
+    """Rename a constraint if it is still called ``old``.
+
+    ``RENAME CONSTRAINT`` has no ``IF EXISTS``, and these are PostgreSQL's
+    auto-generated names from migration 0001 — a convention, not a guarantee.
+    A database whose constraints were named differently should be left alone
+    rather than failing the whole migration over cosmetics.
+    """
+    op.execute(
+        f"""
+        DO $$
+        BEGIN
+            IF EXISTS (
+                SELECT 1 FROM pg_constraint
+                WHERE conname = '{old}' AND conrelid = '{table}'::regclass
+            ) THEN
+                ALTER TABLE {table} RENAME CONSTRAINT {old} TO {new};
+            END IF;
+        END $$;
+        """
+    )
+
+
+# Constraints PostgreSQL named after the columns and table this migration
+# renames. Left alone they would read `scans_repository_id_fkey` on a column
+# called `target_id`, which is exactly the sort of stale name that misleads
+# the next person to run `\\d scans`.
+_CONSTRAINT_RENAMES = (
+    ("targets", "repositories_pkey", "targets_pkey"),
+    ("scans", "scans_repository_id_fkey", "scans_target_id_fkey"),
+    ("schedules", "schedules_repository_id_fkey", "schedules_target_id_fkey"),
+    (
+        "greybox_configs",
+        "greybox_configs_repository_id_fkey",
+        "greybox_configs_target_id_fkey",
+    ),
+    (
+        "finding_triage",
+        "finding_triage_repository_id_fkey",
+        "finding_triage_target_id_fkey",
+    ),
+)
+
+
 def _timestamps() -> list[sa.Column]:
     return [
         sa.Column(
@@ -225,9 +269,11 @@ def upgrade() -> None:
     )
     op.alter_column("targets", "organization_id", nullable=False)
     # `url` now means "the live endpoint", which a legacy repo row does not
-    # have — the clone URL moved to its own column above.
-    op.execute("UPDATE targets SET url = NULL")
+    # have — the clone URL moved to its own column above. Drop the NOT NULL
+    # *before* clearing the values: the old repositories.url was NOT NULL, so
+    # the update would violate the constraint it is about to make obsolete.
     op.alter_column("targets", "url", existing_type=sa.String(length=1024), nullable=True)
+    op.execute("UPDATE targets SET url = NULL")
 
     op.drop_constraint("uq_repo_user_github", "targets", type_="unique")
     op.drop_column("targets", "github_repo_id")
@@ -287,6 +333,9 @@ def upgrade() -> None:
         "ALTER TABLE schedules RENAME CONSTRAINT uq_schedule_repository "
         "TO uq_schedule_target"
     )
+
+    for table, old, new in _CONSTRAINT_RENAMES:
+        _rename_constraint(table, old, new)
 
     # ------------------------------------------------------------------
     # 3. Scans: authorship, retests, engine provenance, attack chains
@@ -479,6 +528,9 @@ def downgrade() -> None:
     op.drop_column("scans", "retest_fingerprint")
     op.drop_constraint("fk_scans_created_by", "scans", type_="foreignkey")
     op.drop_column("scans", "created_by_user_id")
+
+    for table, old, new in _CONSTRAINT_RENAMES:
+        _rename_constraint(table, new, old)
 
     op.execute(
         "ALTER TABLE schedules RENAME CONSTRAINT uq_schedule_target "
